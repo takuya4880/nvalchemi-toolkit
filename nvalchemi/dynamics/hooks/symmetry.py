@@ -59,10 +59,12 @@ class FixSymmetryHook:
     Notes
     -----
     The hook must be constructed from the same graph layout and atomic-number
-    ordering used by the relaxation. It validates that identity at every hook
-    stage and raises :class:`ValueError` if the batch is replaced, reordered,
-    or resized. Consequently, this hook is not compatible with in-flight
-    replacement or graph graduation that changes the active batch layout.
+    ordering used by the relaxation. It validates that identity on its first
+    successful invocation and raises :class:`ValueError` if the initial batch
+    is replaced, reordered, or resized. The graph layout and atomic-number
+    ordering must remain unchanged afterward. Consequently, this hook is not
+    compatible with in-flight replacement or graph graduation that changes the
+    active batch layout.
     ``FusedStage`` is not supported because its sub-stage lifecycle omits
     ``AFTER_PRE_UPDATE``, where position and cell steps must be projected.
     The hook also uses Python graph loops and dynamic safety checks and is not
@@ -204,6 +206,7 @@ class FixSymmetryHook:
         self._batch_ptr = batch.batch_ptr[: batch.num_graphs + 1].detach().clone()
         self._batch_ptr_values = tuple(int(value) for value in self._batch_ptr.tolist())
         self._atomic_numbers = batch.atomic_numbers.detach().clone()
+        self._batch_validated = False
         self._saved_positions: torch.Tensor | None = None
         self._saved_cells: torch.Tensor | None = None
         self._awaiting_after_pre_update = False
@@ -342,30 +345,35 @@ class FixSymmetryHook:
 
         if self.adjust_cell:
             with torch.no_grad():
+                identity = torch.eye(
+                    3,
+                    dtype=proposed_cells.dtype,
+                    device=proposed_cells.device,
+                )
+                delta_deformations = (
+                    torch.linalg.solve(self._saved_cells, proposed_cells).transpose(
+                        -1, -2
+                    )
+                    - identity
+                )
+                max_delta = float(delta_deformations.abs().amax().item())
+                if max_delta > 0.25:
+                    raise RuntimeError(
+                        "FixSymmetryHook adjust_cell produced a deformation "
+                        f"gradient step of {max_delta:.6g}, exceeding 0.25."
+                    )
+                if max_delta > 0.15:
+                    warnings.warn(
+                        "FixSymmetryHook adjust_cell may be ill behaved: "
+                        "deformation gradient step exceeds 0.15.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
                 for graph_index in range(batch.num_graphs):
                     old_cell = self._saved_cells[graph_index]
                     new_cell = batch.cell[graph_index]
-                    delta_deformation = torch.linalg.solve(
-                        old_cell, new_cell
-                    ).T - torch.eye(3, dtype=new_cell.dtype, device=new_cell.device)
-                    max_delta = float(delta_deformation.abs().max().item())
-                    if max_delta > 0.25:
-                        raise RuntimeError(
-                            "FixSymmetryHook adjust_cell produced a deformation "
-                            f"gradient step of {max_delta:.6g}, exceeding 0.25."
-                        )
-                    if max_delta > 0.15:
-                        warnings.warn(
-                            "FixSymmetryHook adjust_cell may be ill behaved: "
-                            "deformation gradient step exceeds 0.15.",
-                            UserWarning,
-                            stacklevel=2,
-                        )
                     projected = self._project_rank2_graph(
-                        delta_deformation, old_cell, graph_index
-                    )
-                    identity = torch.eye(
-                        3, dtype=new_cell.dtype, device=new_cell.device
+                        delta_deformations[graph_index], old_cell, graph_index
                     )
                     new_cell.copy_(old_cell @ (projected + identity).T)
 
@@ -437,7 +445,9 @@ class FixSymmetryHook:
         if ctx.batch is None:
             raise ValueError("FixSymmetryHook requires a dynamics batch.")
         batch = ctx.batch
-        self._validate_batch(batch)
+        needs_validation = not self._batch_validated
+        if needs_validation:
+            self._validate_batch(batch)
 
         if stage == DynamicsStage.BEFORE_PRE_UPDATE:
             self._awaiting_after_pre_update = True
@@ -462,3 +472,6 @@ class FixSymmetryHook:
                 self._project_rank2(stress, batch.cell)
         elif stage == DynamicsStage.AFTER_POST_UPDATE:
             self._project_velocities(ctx)
+
+        if needs_validation:
+            self._batch_validated = True

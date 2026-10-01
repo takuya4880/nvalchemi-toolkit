@@ -390,6 +390,27 @@ class TestFixSymmetryHook:
         with pytest.raises(RuntimeError, match="exceeding 0.25"):
             error_hook(_context(error_batch), DynamicsStage.AFTER_PRE_UPDATE)
 
+    def test_cell_step_threshold_uses_whole_batch_before_mutation(self) -> None:
+        """A later graph triggers one batch-wide warning or atomic rejection."""
+        warning_batch = _make_batch()
+        warning_hook = FixSymmetryHook(warning_batch, adjust_positions=False)
+        warning_hook(_context(warning_batch), DynamicsStage.BEFORE_PRE_UPDATE)
+        warning_batch.cell[1].mul_(1.2)
+        with pytest.warns(UserWarning, match="exceeds 0.15") as records:
+            warning_hook(_context(warning_batch), DynamicsStage.AFTER_PRE_UPDATE)
+        assert len(records) == 1
+
+        error_batch = _make_batch()
+        error_hook = FixSymmetryHook(error_batch, adjust_positions=False)
+        error_hook(_context(error_batch), DynamicsStage.BEFORE_PRE_UPDATE)
+        proposed_cells = error_batch.cell.clone()
+        proposed_cells[0].mul_(1.1)
+        proposed_cells[1].mul_(1.3)
+        error_batch.cell.copy_(proposed_cells)
+        with pytest.raises(RuntimeError, match="exceeding 0.25"):
+            error_hook(_context(error_batch), DynamicsStage.AFTER_PRE_UPDATE)
+        assert torch.equal(error_batch.cell, proposed_cells)
+
     def test_affine_cell_step_preserves_fractional_positions(self, device: str) -> None:
         """Cell-coupled FIRE steps keep off-origin atoms on their Wyckoff sites."""
         from ase import Atoms
@@ -434,19 +455,60 @@ class TestFixSymmetryHook:
         assert symmetry.number == 229
 
     def test_batch_identity_validation(self) -> None:
-        """Changed graph boundaries and atomic ordering fail explicitly."""
+        """First-use graph boundaries and atomic ordering fail explicitly."""
         batch = _make_batch()
-        hook = FixSymmetryHook(batch)
         changed_numbers = _make_batch()
+        numbers_hook = FixSymmetryHook(batch)
         changed_numbers.atomic_numbers[0] = 8
         with pytest.raises(ValueError, match="atomic_numbers"):
-            hook(_context(changed_numbers), DynamicsStage.BEFORE_PRE_UPDATE)
+            numbers_hook(_context(changed_numbers), DynamicsStage.BEFORE_PRE_UPDATE)
+        assert not numbers_hook._batch_validated
+        numbers_hook(_context(batch), DynamicsStage.BEFORE_PRE_UPDATE)
+        assert numbers_hook._batch_validated
 
         changed_layout = Batch.from_data_list(
             [batch.get_data(0), batch.get_data(0), batch.get_data(0)]
         )
+        layout_hook = FixSymmetryHook(batch)
         with pytest.raises(ValueError, match="batch graph layout"):
-            hook(_context(changed_layout), DynamicsStage.BEFORE_PRE_UPDATE)
+            layout_hook(_context(changed_layout), DynamicsStage.BEFORE_PRE_UPDATE)
+        assert not layout_hook._batch_validated
+
+    def test_batch_identity_is_validated_once(self) -> None:
+        """Batch identity checks run only on the first successful invocation."""
+        batch = _make_batch()
+        hook = FixSymmetryHook(batch, adjust_positions=False, adjust_cell=False)
+        ctx = _context(batch)
+        stages = (
+            DynamicsStage.BEFORE_PRE_UPDATE,
+            DynamicsStage.AFTER_PRE_UPDATE,
+            DynamicsStage.AFTER_COMPUTE,
+            DynamicsStage.AFTER_POST_UPDATE,
+        )
+
+        with patch.object(
+            hook, "_validate_batch", wraps=hook._validate_batch
+        ) as validate:
+            for _ in range(2):
+                for stage in stages:
+                    hook(ctx, stage)
+
+        assert validate.call_count == 1
+        assert hook._batch_validated
+
+    def test_batch_validation_is_not_latched_when_stage_fails(self) -> None:
+        """A failed first stage leaves identity validation active for retry."""
+        batch = _make_batch()
+        hook = FixSymmetryHook(batch)
+
+        with pytest.raises(RuntimeError, match="did not snapshot cells"):
+            hook(_context(batch), DynamicsStage.AFTER_PRE_UPDATE)
+        assert not hook._batch_validated
+
+        batch.atomic_numbers[0] = 8
+        with pytest.raises(ValueError, match="atomic_numbers"):
+            hook(_context(batch), DynamicsStage.BEFORE_PRE_UPDATE)
+        assert not hook._batch_validated
 
     def test_protocol_stages_and_frequency_validation(self) -> None:
         """The public hook implements the multi-stage hook protocol."""
