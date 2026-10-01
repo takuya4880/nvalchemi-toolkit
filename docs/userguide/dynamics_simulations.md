@@ -61,6 +61,45 @@ The cell degrees of freedom are propagated using an NPH-like scheme at zero targ
 pressure. The model must return tensile-positive `stress` in addition
 to `forces`.
 
+### Symmetry-constrained optimization
+
+Install the `ase` extra and construct a
+{py:class}`~nvalchemi.dynamics.hooks.FixSymmetryHook` from the exact batch that
+will be relaxed. Construction refines every graph with ASE/spglib and records
+its space-group operations. The hook then projects position and cell steps,
+forces, stress, and optimizer velocities on the batch device:
+
+```python
+from nvalchemi.dynamics import ConvergenceHook
+from nvalchemi.dynamics.hooks import FixSymmetryHook
+from nvalchemi.dynamics.optimizers.fire import FIREVariableCell
+
+symmetry = FixSymmetryHook(
+    batch,
+    symprec=0.01,
+    adjust_positions=True,
+    adjust_cell=True,
+)
+
+with FIREVariableCell(
+    model=model,
+    dt=0.1,
+    n_steps=500,
+    hooks=[symmetry],
+    convergence_hook=ConvergenceHook.from_fmax(0.05),
+) as opt:
+    relaxed = opt.run(batch)
+```
+
+The same hook works with `FIRE`, `FIRE2`, and `FIRE2VariableCell`. It requires
+`frequency=1` and a stable batch layout: in-flight graph replacement,
+graduation, or atom reordering is rejected. `FusedStage` is unsupported because
+its sub-stage lifecycle has no `AFTER_PRE_UPDATE` point at which to constrain
+the coordinate step. Use a standalone optimizer stage instead. The hook uses
+Python graph loops and dynamic safety checks, so it is not compatible with
+`torch.compile(fullgraph=True)` and is intended for correctness-oriented
+relaxation batches rather than compiled hot paths.
+
 ### Choosing between fixed and variable cell
 
 Use fixed-cell FIRE when the cell is known (e.g. a bulk crystal at experimental

@@ -2669,6 +2669,20 @@ class FusedStage(BaseDynamics):
     2
     """
 
+    @staticmethod
+    def _validate_fused_hook_support(hook: Hook) -> None:
+        """Reject hooks whose required lifecycle is unavailable when fused."""
+        if getattr(hook, "supports_fused_stage", True) is False:
+            raise ValueError(
+                "FusedStage does not support hook(s) that require lifecycle "
+                "stages omitted by fused execution: " + type(hook).__name__
+            )
+
+    def register_hook(self, hook: Hook, stage: Enum | None = None) -> None:
+        """Register an outer hook after validating fused-stage support."""
+        self._validate_fused_hook_support(hook)
+        super().register_hook(hook, stage=stage)
+
     def __init__(
         self,
         sub_stages: list[tuple[int, BaseDynamics]],
@@ -2712,6 +2726,10 @@ class FusedStage(BaseDynamics):
         """
         first_dynamics = sub_stages[0][1]
         model = first_dynamics.model
+
+        for _, dynamics in sub_stages:
+            for hook in dynamics.hooks:
+                self._validate_fused_hook_support(hook)
 
         device_types = {dyn.device_type for _, dyn in sub_stages}
         if len(device_types) > 1:
@@ -2950,6 +2968,7 @@ class FusedStage(BaseDynamics):
         ValueError
             If ``hook.frequency`` is not a positive integer.
         """
+        self._validate_fused_hook_support(hook)
         if not isinstance(hook.frequency, int) or hook.frequency < 1:
             raise ValueError(
                 f"Hook {hook!r} has frequency={hook.frequency!r}. "

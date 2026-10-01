@@ -1,0 +1,535 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Tests for the batched space-group symmetry constraint hook."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import numpy as np
+import pytest
+import torch
+
+pytest.importorskip("ase")
+pytest.importorskip("spglib")
+
+from nvalchemi.data import AtomicData, Batch
+from nvalchemi.dynamics import (
+    FIRE,
+    FIRE2,
+    ConvergenceHook,
+    FIRE2VariableCell,
+    FIREVariableCell,
+    FusedStage,
+)
+from nvalchemi.dynamics.base import DynamicsStage
+from nvalchemi.dynamics.hooks import FixSymmetryHook
+from nvalchemi.hooks import DynamicsContext, Hook
+from nvalchemi.models.base import BaseModelMixin, ModelConfig
+
+
+def _make_batch(device: str = "cpu", dtype: torch.dtype = torch.float64) -> Batch:
+    """Create two periodic graphs with different sizes and space groups."""
+    cubic = AtomicData(
+        atomic_numbers=torch.tensor([14]),
+        positions=torch.zeros(1, 3, dtype=dtype),
+        cell=torch.eye(3, dtype=dtype).unsqueeze(0) * 4.0,
+        pbc=torch.ones(1, 3, dtype=torch.bool),
+    )
+    orthorhombic = AtomicData(
+        atomic_numbers=torch.tensor([14, 8]),
+        positions=torch.tensor([[0.0, 0.0, 0.0], [0.46, 0.93, 1.64]], dtype=dtype),
+        cell=torch.diag(torch.tensor([2.0, 3.0, 4.0], dtype=dtype)).unsqueeze(0),
+        pbc=torch.ones(1, 3, dtype=torch.bool),
+    )
+    batch = Batch.from_data_list([cubic, orthorhombic]).to(device)
+    batch.forces = torch.zeros(3, 3, dtype=dtype, device=device)
+    batch.stress = torch.zeros(2, 3, 3, dtype=dtype, device=device)
+    batch.velocities = torch.zeros(3, 3, dtype=dtype, device=device)
+    return batch
+
+
+def _context(batch: Batch, state: object | None = None) -> DynamicsContext:
+    """Create a hook context with an optional optimizer state."""
+    workflow = SimpleNamespace(_state=state) if state is not None else None
+    return DynamicsContext(batch=batch, workflow=workflow)
+
+
+class _AsymmetricModel(torch.nn.Module, BaseModelMixin):
+    """Return deliberately non-symmetric forces and stress for hook tests."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.model_config = ModelConfig(
+            outputs=frozenset({"energy", "forces", "stress"}),
+            supports_pbc=True,
+        )
+
+    @property
+    def embedding_shapes(self) -> dict[str, tuple[int, ...]]:
+        """Return no embedding outputs."""
+        return {}
+
+    def compute_embeddings(self, data: Batch, **kwargs: object) -> Batch:
+        """Return *data* unchanged."""
+        del kwargs
+        return data
+
+    def forward(self, batch: Batch) -> dict[str, torch.Tensor]:
+        """Return fixed asymmetric model outputs."""
+        dtype = batch.positions.dtype
+        device = batch.device
+        raw_force = torch.tensor([1.0, 2.0, 3.0], dtype=dtype, device=device)
+        raw_stress = torch.tensor(
+            [[2.0, 0.3, 0.4], [0.3, -1.0, 0.5], [0.4, 0.5, 0.7]],
+            dtype=dtype,
+            device=device,
+        )
+        return {
+            "energy": torch.zeros(batch.num_graphs, 1, dtype=dtype, device=device),
+            "forces": raw_force.expand_as(batch.positions).clone(),
+            "stress": raw_stress.expand(batch.num_graphs, -1, -1).clone(),
+        }
+
+
+def _make_cubic_batch(device: str = "cpu") -> Batch:
+    """Create a one-atom primitive cubic batch for optimizer integration."""
+    dtype = torch.float64
+    data = AtomicData(
+        atomic_numbers=torch.tensor([14]),
+        atomic_masses=torch.tensor([28.085], dtype=dtype),
+        positions=torch.zeros(1, 3, dtype=dtype),
+        velocities=torch.zeros(1, 3, dtype=dtype),
+        forces=torch.zeros(1, 3, dtype=dtype),
+        energy=torch.zeros(1, 1, dtype=dtype),
+        stress=torch.zeros(1, 3, 3, dtype=dtype),
+        cell=torch.eye(3, dtype=dtype).unsqueeze(0) * 4.0,
+        pbc=torch.ones(1, 3, dtype=torch.bool),
+    )
+    return Batch.from_data_list([data]).to(device)
+
+
+def _expected_rank1(
+    vectors: torch.Tensor,
+    cell: torch.Tensor,
+    rotations: torch.Tensor,
+    symm_map: torch.Tensor,
+) -> torch.Tensor:
+    """Independent transcription of ASE's rank-1 projector."""
+    scaled_t = torch.linalg.inv(cell).T @ vectors.T
+    result_t = torch.zeros_like(scaled_t)
+    for rotation, atom_map in zip(rotations, symm_map, strict=True):
+        result_t[:, atom_map] += rotation @ scaled_t
+    return (cell.T @ (result_t / rotations.shape[0])).T
+
+
+def _expected_rank2(
+    tensor: torch.Tensor,
+    cell: torch.Tensor,
+    rotations: torch.Tensor,
+) -> torch.Tensor:
+    """Independent transcription of ASE's rank-2 projector."""
+    inverse = torch.linalg.inv(cell)
+    scaled = cell @ tensor @ cell.T
+    result = torch.zeros_like(scaled)
+    for rotation in rotations:
+        result += rotation.T @ scaled @ rotation
+    return inverse @ (result / rotations.shape[0]) @ inverse.T
+
+
+def _set_controlled_symmetry(hook: FixSymmetryHook, batch: Batch) -> None:
+    """Install deterministic graph-specific operations for projection tests."""
+    dtype = batch.positions.dtype
+    device = batch.device
+    identity = torch.eye(3, dtype=dtype, device=device)
+    c2z = torch.diag(torch.tensor([-1.0, -1.0, 1.0], dtype=dtype, device=device))
+    hook.rotations = [
+        torch.stack([identity, c2z]),
+        torch.stack([identity, c2z]),
+    ]
+    hook.translations = [
+        torch.zeros(2, 3, dtype=dtype, device=device),
+        torch.zeros(2, 3, dtype=dtype, device=device),
+    ]
+    hook.symm_maps = [
+        torch.tensor([[0], [0]], dtype=torch.long, device=device),
+        torch.tensor([[0, 1], [1, 0]], dtype=torch.long, device=device),
+    ]
+
+
+class TestFixSymmetryHook:
+    """Behavior tests for :class:`FixSymmetryHook`."""
+
+    def test_constructor_refines_and_records_each_graph(self, device: str) -> None:
+        """Each graph gets independent ASE symmetry metadata on its device."""
+        batch = _make_batch(device)
+        hook = FixSymmetryHook(batch)
+
+        assert len(hook.rotations) == 2
+        assert len(hook.translations) == 2
+        assert len(hook.symm_maps) == 2
+        assert hook.rotations[0].shape[0] != hook.rotations[1].shape[0]
+        assert hook.symm_maps[0].shape[1] == 1
+        assert hook.symm_maps[1].shape[1] == 2
+        assert all(rotation.device.type == device for rotation in hook.rotations)
+
+    def test_constructor_refinement_is_atomic(self) -> None:
+        """A later graph failure leaves all input positions and cells unchanged."""
+        batch = _make_batch()
+        positions = batch.positions.clone()
+        cells = batch.cell.clone()
+        calls = 0
+
+        def fake_refine(atoms, symprec, verbose):
+            del symprec, verbose
+            atoms.positions += 1.0
+
+        def fake_prep(atoms, symprec, verbose):
+            nonlocal calls
+            del symprec, verbose
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("second graph failed")
+            count = len(atoms)
+            return (
+                np.eye(3, dtype=int)[None],
+                np.zeros((1, 3)),
+                np.arange(count)[None],
+            )
+
+        with (
+            patch("ase.spacegroup.symmetrize.refine_symmetry", fake_refine),
+            patch("ase.spacegroup.symmetrize.prep_symmetry", fake_prep),
+            pytest.raises(RuntimeError, match="second graph failed"),
+        ):
+            FixSymmetryHook(batch)
+
+        assert torch.equal(batch.positions, positions)
+        assert torch.equal(batch.cell, cells)
+
+    def test_rank1_position_force_and_velocity_projection(self, device: str) -> None:
+        """Position steps, forces, and velocities use the ASE rank-1 formula."""
+        batch = _make_batch(device)
+        hook = FixSymmetryHook(batch, adjust_cell=False)
+        _set_controlled_symmetry(hook, batch)
+        ctx = _context(batch)
+        hook(ctx, DynamicsStage.BEFORE_PRE_UPDATE)
+
+        step = torch.tensor(
+            [[1.0, 2.0, 3.0], [0.4, -0.2, 0.8], [-0.7, 0.3, 0.1]],
+            dtype=batch.positions.dtype,
+            device=batch.device,
+        )
+        initial = batch.positions.clone()
+        expected_step = torch.cat(
+            [
+                _expected_rank1(
+                    step[:1], batch.cell[0], hook.rotations[0], hook.symm_maps[0]
+                ),
+                _expected_rank1(
+                    step[1:], batch.cell[1], hook.rotations[1], hook.symm_maps[1]
+                ),
+            ]
+        )
+        batch.positions.add_(step)
+        batch.velocities.copy_(step * 2.0)
+        hook(ctx, DynamicsStage.AFTER_PRE_UPDATE)
+        assert torch.allclose(batch.positions, initial + expected_step)
+        assert torch.allclose(batch.velocities, expected_step * 2.0)
+
+        batch.forces.copy_(step * 3.0)
+        hook(ctx, DynamicsStage.AFTER_COMPUTE)
+        assert torch.allclose(batch.forces, expected_step * 3.0)
+
+    def test_rank2_stress_and_cell_projection(self, device: str) -> None:
+        """Stress and deformation-gradient steps use the ASE rank-2 formula."""
+        batch = _make_batch(device)
+        hook = FixSymmetryHook(batch, adjust_positions=False)
+        _set_controlled_symmetry(hook, batch)
+        ctx = _context(batch)
+        hook(ctx, DynamicsStage.BEFORE_PRE_UPDATE)
+        old_cells = batch.cell.clone()
+        deltas = torch.tensor(
+            [
+                [[0.02, 0.03, 0.04], [0.01, -0.02, 0.05], [0.06, 0.07, 0.01]],
+                [[-0.01, 0.02, 0.08], [0.03, 0.04, 0.09], [0.05, 0.06, 0.02]],
+            ],
+            dtype=batch.positions.dtype,
+            device=batch.device,
+        )
+        expected_deltas = torch.stack(
+            [
+                _expected_rank2(deltas[i], old_cells[i], hook.rotations[i])
+                for i in range(2)
+            ]
+        )
+        identity = torch.eye(3, dtype=batch.positions.dtype, device=batch.device)
+        batch.cell.copy_(old_cells @ (deltas + identity).transpose(-1, -2))
+        hook(ctx, DynamicsStage.AFTER_PRE_UPDATE)
+        assert torch.allclose(
+            batch.cell,
+            old_cells @ (expected_deltas + identity).transpose(-1, -2),
+        )
+
+        raw_stress = torch.tensor(
+            [
+                [[1.0, 2.0, 3.0], [2.0, 4.0, 5.0], [3.0, 5.0, 6.0]],
+                [[2.0, 1.0, 4.0], [1.0, 3.0, 5.0], [4.0, 5.0, 7.0]],
+            ],
+            dtype=batch.positions.dtype,
+            device=batch.device,
+        )
+        expected_stress = torch.stack(
+            [
+                _expected_rank2(raw_stress[i], batch.cell[i], hook.rotations[i])
+                for i in range(2)
+            ]
+        )
+        batch.stress.copy_(raw_stress)
+        hook(ctx, DynamicsStage.AFTER_COMPUTE)
+        assert torch.allclose(batch.stress, expected_stress)
+
+    def test_projectors_match_ase_oracle(self) -> None:
+        """Torch projectors match ASE for a skew cell and non-trivial map."""
+        from ase.spacegroup.symmetrize import symmetrize_rank1, symmetrize_rank2
+
+        batch = _make_batch()
+        hook = FixSymmetryHook(batch)
+        _set_controlled_symmetry(hook, batch)
+        graph_index = 1
+        vectors = torch.tensor(
+            [[0.4, -0.2, 0.8], [-0.1, 0.7, 0.3]], dtype=batch.positions.dtype
+        )
+        tensor = torch.tensor(
+            [[1.0, 0.2, 0.3], [0.2, 2.0, 0.4], [0.3, 0.4, -1.0]],
+            dtype=batch.positions.dtype,
+        )
+        cell = torch.tensor(
+            [[3.0, 0.0, 0.0], [0.5, 2.5, 0.0], [0.2, 0.3, 4.0]],
+            dtype=batch.positions.dtype,
+        )
+        rotations = hook.rotations[graph_index]
+        translations = hook.translations[graph_index]
+        symm_map = hook.symm_maps[graph_index]
+
+        expected_vectors = symmetrize_rank1(
+            cell.numpy(),
+            torch.linalg.inv(cell).numpy(),
+            vectors.numpy(),
+            rotations.numpy(),
+            translations.numpy(),
+            symm_map.numpy(),
+        )
+        expected_tensor = symmetrize_rank2(
+            cell.numpy(),
+            torch.linalg.inv(cell).numpy(),
+            tensor.numpy(),
+            rotations.numpy(),
+        )
+        assert torch.allclose(
+            hook._project_rank1_graph(vectors, cell, graph_index),
+            torch.from_numpy(expected_vectors),
+        )
+        assert torch.allclose(
+            hook._project_rank2_graph(tensor, cell, graph_index),
+            torch.from_numpy(expected_tensor),
+        )
+
+    @pytest.mark.parametrize("field", ["cell_velocity", "cell_velocities"])
+    def test_cell_velocity_projects_deformation_rate(
+        self, field: str, device: str
+    ) -> None:
+        """FIRE and FIRE2 Hdot state is projected through deformation rate."""
+        batch = _make_batch(device)
+        hook = FixSymmetryHook(batch, adjust_positions=False)
+        _set_controlled_symmetry(hook, batch)
+        raw = torch.tensor(
+            [
+                [[0.2, 0.3, 0.4], [0.1, -0.2, 0.5], [0.6, 0.7, 0.1]],
+                [[-0.1, 0.2, 0.8], [0.3, 0.4, 0.9], [0.5, 0.6, 0.2]],
+            ],
+            dtype=batch.positions.dtype,
+            device=batch.device,
+        )
+        state = SimpleNamespace(**{field: raw.clone()})
+        expected = []
+        for i in range(2):
+            rate = torch.linalg.solve(batch.cell[i], raw[i]).T
+            projected_rate = _expected_rank2(rate, batch.cell[i], hook.rotations[i])
+            expected.append(batch.cell[i] @ projected_rate.T)
+
+        hook(_context(batch, state), DynamicsStage.AFTER_POST_UPDATE)
+        assert torch.allclose(getattr(state, field), torch.stack(expected))
+
+    def test_cell_step_warning_and_error_thresholds(self) -> None:
+        """Large deformation steps follow ASE's warning and error thresholds."""
+        warning_batch = _make_batch()
+        warning_hook = FixSymmetryHook(warning_batch, adjust_positions=False)
+        warning_hook(_context(warning_batch), DynamicsStage.BEFORE_PRE_UPDATE)
+        warning_batch.cell[0].mul_(1.2)
+        with pytest.warns(UserWarning, match="exceeds 0.15"):
+            warning_hook(_context(warning_batch), DynamicsStage.AFTER_PRE_UPDATE)
+
+        error_batch = _make_batch()
+        error_hook = FixSymmetryHook(error_batch, adjust_positions=False)
+        error_hook(_context(error_batch), DynamicsStage.BEFORE_PRE_UPDATE)
+        error_batch.cell[0].mul_(1.3)
+        with pytest.raises(RuntimeError, match="exceeding 0.25"):
+            error_hook(_context(error_batch), DynamicsStage.AFTER_PRE_UPDATE)
+
+    def test_batch_identity_validation(self) -> None:
+        """Changed graph boundaries and atomic ordering fail explicitly."""
+        batch = _make_batch()
+        hook = FixSymmetryHook(batch)
+        changed_numbers = _make_batch()
+        changed_numbers.atomic_numbers[0] = 8
+        with pytest.raises(ValueError, match="atomic_numbers"):
+            hook(_context(changed_numbers), DynamicsStage.BEFORE_PRE_UPDATE)
+
+        changed_layout = Batch.from_data_list(
+            [batch.get_data(0), batch.get_data(0), batch.get_data(0)]
+        )
+        with pytest.raises(ValueError, match="batch graph layout"):
+            hook(_context(changed_layout), DynamicsStage.BEFORE_PRE_UPDATE)
+
+    def test_protocol_stages_and_frequency_validation(self) -> None:
+        """The public hook implements the multi-stage hook protocol."""
+        batch = _make_batch()
+        hook = FixSymmetryHook(batch)
+        assert isinstance(hook, Hook)
+        assert hook.stage == DynamicsStage.BEFORE_PRE_UPDATE
+        assert hook._active_stages == frozenset(
+            {
+                DynamicsStage.BEFORE_PRE_UPDATE,
+                DynamicsStage.AFTER_PRE_UPDATE,
+                DynamicsStage.AFTER_COMPUTE,
+                DynamicsStage.AFTER_POST_UPDATE,
+            }
+        )
+        with pytest.raises(ValueError, match="frequency=1"):
+            FixSymmetryHook(_make_batch(), frequency=2)
+
+    def test_fused_stage_is_rejected_explicitly(self) -> None:
+        """FusedStage construction rejects the missing AFTER_PRE_UPDATE stage."""
+        batch = _make_cubic_batch()
+        model = _AsymmetricModel()
+        constrained = FIRE(
+            model=model, dt=0.01, hooks=[FixSymmetryHook(batch, adjust_cell=False)]
+        )
+        other = FIRE(model=model, dt=0.01)
+        with pytest.raises(ValueError, match="FixSymmetryHook"):
+            _ = constrained + other
+
+    @pytest.mark.parametrize(
+        "registration",
+        ["constructor", "register_hook", "register_fused_hook"],
+    )
+    def test_fused_stage_rejects_outer_hook_paths(self, registration: str) -> None:
+        """Every outer FusedStage registration path enforces capabilities."""
+        batch = _make_cubic_batch()
+        model = _AsymmetricModel()
+        stages = [(0, FIRE(model=model, dt=0.01))]
+        hook = FixSymmetryHook(batch, adjust_cell=False)
+
+        with pytest.raises(ValueError, match="FixSymmetryHook"):
+            if registration == "constructor":
+                FusedStage(sub_stages=stages, hooks=[hook])
+            else:
+                fused = FusedStage(sub_stages=stages)
+                getattr(fused, registration)(hook)
+
+    def test_missing_after_pre_update_has_runtime_guard(self) -> None:
+        """Nonstandard lifecycles cannot silently skip coordinate projection."""
+        batch = _make_cubic_batch()
+        hook = FixSymmetryHook(batch)
+        ctx = _context(batch)
+        hook(ctx, DynamicsStage.BEFORE_PRE_UPDATE)
+        with pytest.raises(RuntimeError, match="does not support FusedStage"):
+            hook(ctx, DynamicsStage.AFTER_COMPUTE)
+
+
+@pytest.mark.parametrize(
+    ("optimizer_type", "cell_state_field"),
+    [
+        (FIRE, None),
+        (FIREVariableCell, "cell_velocity"),
+        (FIRE2, None),
+        (FIRE2VariableCell, "cell_velocities"),
+    ],
+)
+def test_real_optimizer_run_preserves_symmetry(
+    optimizer_type: type, cell_state_field: str | None, device: str
+) -> None:
+    """All FIRE variants preserve symmetry through multiple real steps."""
+    from ase import Atoms
+    from ase.spacegroup.symmetrize import check_symmetry
+
+    batch = _make_cubic_batch(device)
+    hook = FixSymmetryHook(batch)
+    initial_number = check_symmetry(
+        Atoms(
+            numbers=batch.atomic_numbers.cpu().numpy(),
+            positions=batch.positions.cpu().numpy(),
+            cell=batch.cell[0].cpu().numpy(),
+            pbc=True,
+        ),
+        symprec=hook.symprec,
+        verbose=False,
+    ).number
+    optimizer = optimizer_type(
+        model=_AsymmetricModel(), dt=0.01, n_steps=3, hooks=[hook]
+    )
+    result = optimizer.run(batch)
+
+    final_number = check_symmetry(
+        Atoms(
+            numbers=result.atomic_numbers.cpu().numpy(),
+            positions=result.positions.cpu().numpy(),
+            cell=result.cell[0].cpu().numpy(),
+            pbc=True,
+        ),
+        symprec=hook.symprec,
+        verbose=False,
+    ).number
+    assert optimizer.step_count == 3
+    assert final_number == initial_number
+    assert torch.allclose(result.forces, torch.zeros_like(result.forces), atol=1e-12)
+
+    if cell_state_field is not None:
+        cell_velocity = getattr(optimizer._state, cell_state_field)
+        assert cell_velocity.shape == (1, 3, 3)
+        cell = result.cell[0]
+        rate = torch.linalg.solve(cell, cell_velocity[0]).T
+        expected = hook._project_rank2_graph(rate, cell, 0)
+        assert torch.allclose(rate, expected, atol=1e-10)
+
+
+def test_projected_force_controls_fmax_convergence(device: str) -> None:
+    """Convergence observes AFTER_COMPUTE-projected forces, not raw forces."""
+    batch = _make_cubic_batch(device)
+    model = _AsymmetricModel()
+    raw_force_norm = torch.linalg.vector_norm(model(batch)["forces"], dim=-1).max()
+    optimizer = FIRE(
+        model=model,
+        dt=0.01,
+        hooks=[FixSymmetryHook(batch, adjust_cell=False)],
+        convergence_hook=ConvergenceHook.from_fmax(0.1),
+    )
+
+    _, converged = optimizer.step(batch)
+    assert raw_force_norm > 0.1
+    assert torch.equal(converged, torch.tensor([0], device=batch.device))
+    assert torch.allclose(batch.forces, torch.zeros_like(batch.forces), atol=1e-12)
