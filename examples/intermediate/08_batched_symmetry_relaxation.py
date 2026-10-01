@@ -40,10 +40,10 @@ minimum speedup is asserted.
 The default workload can be adjusted with these environment variables:
 
 * ``NVALCHEMI_SYMMETRY_RELAX_STEPS`` (default ``40``)
-* ``NVALCHEMI_SYMMETRY_BENCH_STEPS`` (default ``2``)
+* ``NVALCHEMI_SYMMETRY_BENCH_STEPS`` (default ``100``)
 * ``NVALCHEMI_SYMMETRY_BENCH_WARMUP`` (default ``1``)
 * ``NVALCHEMI_SYMMETRY_BENCH_REPEATS`` (default ``2``)
-* ``NVALCHEMI_SYMMETRY_BATCH_SIZES`` (default ``1,2,4,8``)
+* ``NVALCHEMI_SYMMETRY_BATCH_SIZES`` (default ``1,2,4,8,16,32``)
 
 TensorNet support requires ``pip install 'matgl>=2.1.2'``. The first run
 downloads the pretrained model selected by ``NVALCHEMI_TENSORNET_MODEL``
@@ -472,12 +472,14 @@ def main() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     relax_steps = int(os.getenv("NVALCHEMI_SYMMETRY_RELAX_STEPS", "40"))
-    benchmark_steps = int(os.getenv("NVALCHEMI_SYMMETRY_BENCH_STEPS", "2"))
+    benchmark_steps = int(os.getenv("NVALCHEMI_SYMMETRY_BENCH_STEPS", "100"))
     benchmark_warmup = int(os.getenv("NVALCHEMI_SYMMETRY_BENCH_WARMUP", "1"))
     benchmark_repeats = int(os.getenv("NVALCHEMI_SYMMETRY_BENCH_REPEATS", "2"))
     benchmark_batch_sizes = tuple(
         int(value)
-        for value in os.getenv("NVALCHEMI_SYMMETRY_BATCH_SIZES", "1,2,4,8").split(",")
+        for value in os.getenv("NVALCHEMI_SYMMETRY_BATCH_SIZES", "1,2,4,8,16,32").split(
+            ","
+        )
     )
     if relax_steps < 2:
         raise ValueError("Relaxation requires at least two FIRE2 steps.")
