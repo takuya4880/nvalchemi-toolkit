@@ -390,6 +390,49 @@ class TestFixSymmetryHook:
         with pytest.raises(RuntimeError, match="exceeding 0.25"):
             error_hook(_context(error_batch), DynamicsStage.AFTER_PRE_UPDATE)
 
+    def test_affine_cell_step_preserves_fractional_positions(self, device: str) -> None:
+        """Cell-coupled FIRE steps keep off-origin atoms on their Wyckoff sites."""
+        from ase import Atoms
+        from ase.spacegroup.symmetrize import check_symmetry
+
+        dtype = torch.float64
+        data = AtomicData(
+            atomic_numbers=torch.tensor([26, 26]),
+            atomic_masses=torch.full((2,), 55.845, dtype=dtype),
+            positions=torch.tensor([[0.0, 0.0, 0.0], [2.0, 2.0, 2.0]], dtype=dtype),
+            velocities=torch.zeros(2, 3, dtype=dtype),
+            forces=torch.zeros(2, 3, dtype=dtype),
+            energy=torch.zeros(1, 1, dtype=dtype),
+            stress=torch.zeros(1, 3, 3, dtype=dtype),
+            cell=torch.eye(3, dtype=dtype).unsqueeze(0) * 4.0,
+            pbc=torch.ones(1, 3, dtype=torch.bool),
+        )
+        batch = Batch.from_data_list([data]).to(device)
+        hook = FixSymmetryHook(batch)
+        ctx = _context(batch)
+        initial_scaled = torch.linalg.solve(
+            batch.cell[0].T, batch.positions.T
+        ).T.clone()
+
+        hook(ctx, DynamicsStage.BEFORE_PRE_UPDATE)
+        batch.cell.mul_(1.02)
+        batch.positions.mul_(1.02)
+        hook(ctx, DynamicsStage.AFTER_PRE_UPDATE)
+
+        final_scaled = torch.linalg.solve(batch.cell[0].T, batch.positions.T).T
+        assert torch.allclose(final_scaled, initial_scaled, atol=1e-12)
+        symmetry = check_symmetry(
+            Atoms(
+                numbers=batch.atomic_numbers.cpu().numpy(),
+                positions=batch.positions.cpu().numpy(),
+                cell=batch.cell[0].cpu().numpy(),
+                pbc=True,
+            ),
+            symprec=hook.symprec,
+            verbose=False,
+        )
+        assert symmetry.number == 229
+
     def test_batch_identity_validation(self) -> None:
         """Changed graph boundaries and atomic ordering fail explicitly."""
         batch = _make_batch()

@@ -29,3 +29,7 @@ selection.
 **07 — Rich Training Reporting**: Live Rich dashboard driven by synthetic
 training losses, validation metrics, progress counters, and learning-rate
 scheduler values.
+
+**08 — Batched Symmetry Relaxation**: TensorNet-powered FIRE2 variable-cell
+relaxation of diamond Si, BCC Fe, and FCC Al with per-graph space-group
+constraints and a lightweight batch-throughput scaling check.

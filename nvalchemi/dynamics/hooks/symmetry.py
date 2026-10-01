@@ -325,21 +325,22 @@ class FixSymmetryHook:
 
     def _project_position_and_cell_steps(self, batch: Batch) -> None:
         """Project the coordinate and deformation steps made by pre-update."""
-        if self.adjust_positions:
-            if self._saved_positions is None or self._saved_cells is None:
-                raise RuntimeError(
-                    "FixSymmetryHook did not snapshot positions before pre_update."
-                )
-            step = batch.positions - self._saved_positions
-            self._project_rank1(step, self._saved_cells)
-            with torch.no_grad():
-                batch.positions.copy_(self._saved_positions + step)
+        if self._saved_cells is None:
+            raise RuntimeError(
+                "FixSymmetryHook did not snapshot cells before pre_update."
+            )
+        saved_positions = self._saved_positions
+        if self.adjust_positions and saved_positions is None:
+            raise RuntimeError(
+                "FixSymmetryHook did not snapshot positions before pre_update."
+            )
+
+        # A variable-cell update contains an affine position remap. Only its
+        # internal-coordinate remainder should be projected as a rank-1 step.
+        proposed_cells = batch.cell.clone()
+        proposed_positions = batch.positions.clone()
 
         if self.adjust_cell:
-            if self._saved_cells is None:
-                raise RuntimeError(
-                    "FixSymmetryHook did not snapshot cells before pre_update."
-                )
             with torch.no_grad():
                 for graph_index in range(batch.num_graphs):
                     old_cell = self._saved_cells[graph_index]
@@ -367,6 +368,33 @@ class FixSymmetryHook:
                         3, dtype=new_cell.dtype, device=new_cell.device
                     )
                     new_cell.copy_(old_cell @ (projected + identity).T)
+
+        if self.adjust_positions:
+            with torch.no_grad():
+                for graph_index, (start, end) in enumerate(
+                    zip(
+                        self._batch_ptr_values[:-1],
+                        self._batch_ptr_values[1:],
+                        strict=True,
+                    )
+                ):
+                    old_cell = self._saved_cells[graph_index]
+                    proposed_cell = proposed_cells[graph_index]
+                    projected_cell = batch.cell[graph_index]
+                    old_positions = saved_positions[start:end]
+                    proposed_scaled = torch.linalg.solve(
+                        proposed_cell.T, proposed_positions[start:end].T
+                    ).T
+                    proposed_in_old_cell = proposed_scaled @ old_cell
+                    internal_step = self._project_rank1_graph(
+                        proposed_in_old_cell - old_positions,
+                        old_cell,
+                        graph_index,
+                    )
+                    corrected_scaled = torch.linalg.solve(
+                        old_cell.T, (old_positions + internal_step).T
+                    ).T
+                    batch.positions[start:end].copy_(corrected_scaled @ projected_cell)
 
     def _project_velocities(self, ctx: DynamicsContext) -> None:
         """Project atomic and optimizer cell velocities when present."""
