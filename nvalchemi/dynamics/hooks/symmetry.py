@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 import warnings
 from enum import Enum
 
@@ -280,7 +281,10 @@ class FixSymmetryHook:
     ) -> torch.Tensor:
         """Apply ASE's Cartesian rank-1 symmetry projector to one graph."""
         rotations, symm_map = self._graph_symmetry(graph_index, vectors)
-        inv_cell = torch.linalg.inv(cell.to(device=vectors.device, dtype=vectors.dtype))
+        inv_cell = torch.linalg.inv_ex(
+            cell.to(device=vectors.device, dtype=vectors.dtype),
+            check_errors=False,
+        ).inverse
         scaled_vectors_t = inv_cell.T @ vectors.T
         projected_t = torch.zeros_like(scaled_vectors_t)
         if rotations.ndim != 3 or rotations.shape[1:] != (3, 3):
@@ -348,7 +352,7 @@ class FixSymmetryHook:
         """Apply ASE's Cartesian rank-2 symmetry projector to one graph."""
         rotations, multiplicities = self._rank2_rotations(graph_index, tensor)
         cell = cell.to(device=tensor.device, dtype=tensor.dtype)
-        inv_cell = torch.linalg.inv(cell)
+        inv_cell = torch.linalg.inv_ex(cell, check_errors=False).inverse
         scaled_tensor = cell @ tensor @ cell.T
         transformed = torch.matmul(
             rotations.transpose(-1, -2),
@@ -415,12 +419,19 @@ class FixSymmetryHook:
                     device=proposed_cells.device,
                 )
                 delta_deformations = (
-                    torch.linalg.solve(self._saved_cells, proposed_cells).transpose(
-                        -1, -2
-                    )
+                    torch.linalg.solve_ex(
+                        self._saved_cells,
+                        proposed_cells,
+                        check_errors=False,
+                    ).result.transpose(-1, -2)
                     - identity
                 )
                 max_delta = float(delta_deformations.abs().amax().item())
+                if not math.isfinite(max_delta):
+                    raise RuntimeError(
+                        "FixSymmetryHook adjust_cell produced a non-finite "
+                        "deformation gradient step."
+                    )
                 if max_delta > 0.25:
                     raise RuntimeError(
                         "FixSymmetryHook adjust_cell produced a deformation "
@@ -454,18 +465,22 @@ class FixSymmetryHook:
                     proposed_cell = proposed_cells[graph_index]
                     projected_cell = batch.cell[graph_index]
                     old_positions = saved_positions[start:end]
-                    proposed_scaled = torch.linalg.solve(
-                        proposed_cell.T, proposed_positions[start:end].T
-                    ).T
+                    proposed_scaled = torch.linalg.solve_ex(
+                        proposed_cell.T,
+                        proposed_positions[start:end].T,
+                        check_errors=False,
+                    ).result.T
                     proposed_in_old_cell = proposed_scaled @ old_cell
                     internal_step = self._project_rank1_graph(
                         proposed_in_old_cell - old_positions,
                         old_cell,
                         graph_index,
                     )
-                    corrected_scaled = torch.linalg.solve(
-                        old_cell.T, (old_positions + internal_step).T
-                    ).T
+                    corrected_scaled = torch.linalg.solve_ex(
+                        old_cell.T,
+                        (old_positions + internal_step).T,
+                        check_errors=False,
+                    ).result.T
                     batch.positions[start:end].copy_(corrected_scaled @ projected_cell)
 
     def _project_velocities(self, ctx: DynamicsContext) -> None:
@@ -496,9 +511,11 @@ class FixSymmetryHook:
                         )
                         # Optimizers store Hdot, whereas the symmetry projector
                         # acts on the deformation-rate tensor (inv(H) @ Hdot).T.
-                        deformation_rate = torch.linalg.solve(
-                            cell, value[graph_index]
-                        ).T
+                        deformation_rate = torch.linalg.solve_ex(
+                            cell,
+                            value[graph_index],
+                            check_errors=False,
+                        ).result.T
                         projected = self._project_rank2_graph(
                             deformation_rate, cell, graph_index
                         )

@@ -610,6 +610,16 @@ class TestFixSymmetryHook:
             error_hook(_context(error_batch), DynamicsStage.AFTER_PRE_UPDATE)
         assert torch.equal(error_batch.cell, proposed_cells)
 
+    def test_cell_step_rejects_non_finite_deformation(self) -> None:
+        """Unchecked linear algebra still rejects non-finite cell steps."""
+        batch = _make_batch()
+        hook = FixSymmetryHook(batch, adjust_positions=False)
+        hook(_context(batch), DynamicsStage.BEFORE_PRE_UPDATE)
+        batch.cell[1, 0, 0] = torch.nan
+
+        with pytest.raises(RuntimeError, match="non-finite deformation"):
+            hook(_context(batch), DynamicsStage.AFTER_PRE_UPDATE)
+
     def test_affine_cell_step_preserves_fractional_positions(self, device: str) -> None:
         """Cell-coupled FIRE steps keep off-origin atoms on their Wyckoff sites."""
         from ase import Atoms
@@ -694,6 +704,57 @@ class TestFixSymmetryHook:
 
         assert validate.call_count == 1
         assert hook._batch_validated
+
+    def test_projection_lifecycle_uses_check_free_linalg(self) -> None:
+        """Per-step projections avoid error-checking linear algebra calls."""
+        batch = _make_batch()
+        hook = FixSymmetryHook(batch)
+        _set_controlled_symmetry(hook, batch)
+        state = SimpleNamespace(cell_velocity=torch.full_like(batch.cell, 0.01))
+        ctx = _context(batch, state)
+        original_inv_ex = torch.linalg.inv_ex
+        original_solve_ex = torch.linalg.solve_ex
+
+        with (
+            patch.object(
+                torch.linalg,
+                "inv",
+                side_effect=AssertionError("legacy inv must not run per step"),
+            ),
+            patch.object(
+                torch.linalg,
+                "solve",
+                side_effect=AssertionError("legacy solve must not run per step"),
+            ),
+            patch.object(
+                torch.linalg,
+                "inv_ex",
+                wraps=original_inv_ex,
+            ) as inv_ex,
+            patch.object(
+                torch.linalg,
+                "solve_ex",
+                wraps=original_solve_ex,
+            ) as solve_ex,
+        ):
+            hook(ctx, DynamicsStage.BEFORE_PRE_UPDATE)
+            batch.cell.mul_(1.01)
+            batch.positions.add_(0.01)
+            batch.velocities.fill_(0.02)
+            hook(ctx, DynamicsStage.AFTER_PRE_UPDATE)
+            batch.forces.fill_(0.03)
+            batch.stress.fill_(0.04)
+            hook(ctx, DynamicsStage.AFTER_COMPUTE)
+            hook(ctx, DynamicsStage.AFTER_POST_UPDATE)
+
+        assert inv_ex.call_count > 0
+        assert solve_ex.call_count > 0
+        assert all(
+            call.kwargs["check_errors"] is False for call in inv_ex.call_args_list
+        )
+        assert all(
+            call.kwargs["check_errors"] is False for call in solve_ex.call_args_list
+        )
 
     def test_batch_validation_is_not_latched_when_stage_fails(self) -> None:
         """A failed first stage leaves identity validation active for retry."""
