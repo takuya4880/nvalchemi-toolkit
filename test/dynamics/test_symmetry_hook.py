@@ -509,6 +509,108 @@ class TestFixSymmetryHook:
         )
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_batched_rank2_matches_mixed_space_group_oracle(
+        self,
+        dtype: torch.dtype,
+        device: str,
+    ) -> None:
+        """A mixed batch matches graph oracles with one batched inverse."""
+        batch = _make_batch(device, dtype)
+        hook = FixSymmetryHook(batch)
+        assert hook.rotations[0].shape[0] != hook.rotations[1].shape[0]
+        tensors = torch.tensor(
+            [
+                [[1.0, 0.2, 0.7], [0.4, -0.5, 0.6], [-0.3, 0.8, 1.4]],
+                [[-0.2, 0.5, 0.1], [0.7, 1.3, -0.4], [0.9, 0.3, -0.8]],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+        expected = torch.stack(
+            [
+                _expected_rank2(tensors[i], batch.cell[i], hook.rotations[i])
+                for i in range(batch.num_graphs)
+            ]
+        )
+        original_inv_ex = torch.linalg.inv_ex
+
+        with patch.object(
+            torch.linalg,
+            "inv_ex",
+            wraps=original_inv_ex,
+        ) as inv_ex:
+            projected = hook._project_rank2_batch(tensors, batch.cell)
+
+        tolerance = 2e-5 if dtype == torch.float32 else 1e-12
+        assert torch.allclose(projected, expected, atol=tolerance, rtol=tolerance)
+        assert inv_ex.call_count == 1
+        assert inv_ex.call_args.args[0].shape == (batch.num_graphs, 3, 3)
+        assert inv_ex.call_args.kwargs["check_errors"] is False
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_batched_rank2_cache_tracks_rotation_identity_and_version(
+        self,
+        dtype: torch.dtype,
+        device: str,
+    ) -> None:
+        """Padded rotation cache preserves weights and invalidates safely."""
+        batch = _make_batch(device, dtype)
+        hook = FixSymmetryHook(batch)
+        identity = torch.eye(3, dtype=dtype, device=device)
+        c2z = torch.diag(torch.tensor([-1.0, -1.0, 1.0], dtype=dtype, device=device))
+        hook.rotations = [
+            torch.stack([identity, identity, identity]),
+            torch.stack([identity, c2z, c2z, c2z]),
+        ]
+        tensors = torch.tensor(
+            [
+                [[1.0, 0.2, 0.7], [0.4, -0.5, 0.6], [-0.3, 0.8, 1.4]],
+                [[-0.2, 0.5, 0.1], [0.7, 1.3, -0.4], [0.9, 0.3, -0.8]],
+            ],
+            dtype=dtype,
+            device=device,
+        )
+
+        expected = torch.stack(
+            [
+                _expected_rank2(tensors[i], batch.cell[i], hook.rotations[i])
+                for i in range(batch.num_graphs)
+            ]
+        )
+        projected = hook._project_rank2_batch(tensors, batch.cell)
+        first_cache = hook._rank2_batch_cache
+        assert first_cache is not None
+        assert first_cache[4].sum(dim=1).tolist() == [1, 2]
+        assert torch.allclose(
+            first_cache[3].sum(dim=1),
+            torch.ones(2, dtype=dtype, device=device),
+        )
+        assert torch.allclose(projected, expected)
+
+        hook.rotations[1].copy_(torch.stack([identity, identity, identity, c2z]))
+        updated = hook._project_rank2_batch(tensors, batch.cell)
+        in_place_cache = hook._rank2_batch_cache
+        updated_expected = torch.stack(
+            [
+                _expected_rank2(tensors[i], batch.cell[i], hook.rotations[i])
+                for i in range(batch.num_graphs)
+            ]
+        )
+        assert in_place_cache is not first_cache
+        assert torch.allclose(updated, updated_expected)
+
+        hook.rotations[0] = torch.stack([identity, c2z])
+        replaced = hook._project_rank2_batch(tensors, batch.cell)
+        replaced_expected = torch.stack(
+            [
+                _expected_rank2(tensors[i], batch.cell[i], hook.rotations[i])
+                for i in range(batch.num_graphs)
+            ]
+        )
+        assert hook._rank2_batch_cache is not in_place_cache
+        assert torch.allclose(replaced, replaced_expected)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     def test_rank1_chunk_boundaries_do_not_change_projection(
         self,
         dtype: torch.dtype,
@@ -609,6 +711,28 @@ class TestFixSymmetryHook:
         with pytest.raises(RuntimeError, match="exceeding 0.25"):
             error_hook(_context(error_batch), DynamicsStage.AFTER_PRE_UPDATE)
         assert torch.equal(error_batch.cell, proposed_cells)
+
+    def test_cell_projection_failure_preserves_proposed_batch(self) -> None:
+        """A failed batched projection cannot partially update graph cells."""
+        batch = _make_batch()
+        hook = FixSymmetryHook(batch, adjust_positions=False)
+        ctx = _context(batch)
+        hook(ctx, DynamicsStage.BEFORE_PRE_UPDATE)
+        batch.cell[0].mul_(1.01)
+        batch.cell[1].mul_(0.99)
+        proposed_cells = batch.cell.clone()
+
+        with (
+            patch.object(
+                hook,
+                "_project_rank2_batch",
+                side_effect=RuntimeError("projection failed"),
+            ),
+            pytest.raises(RuntimeError, match="projection failed"),
+        ):
+            hook(ctx, DynamicsStage.AFTER_PRE_UPDATE)
+
+        assert torch.equal(batch.cell, proposed_cells)
 
     def test_cell_step_rejects_non_finite_deformation(self) -> None:
         """Unchecked linear algebra still rejects non-finite cell steps."""

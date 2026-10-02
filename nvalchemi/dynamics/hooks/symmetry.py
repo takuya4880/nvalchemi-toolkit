@@ -221,6 +221,16 @@ class FixSymmetryHook:
                 torch.Tensor,
             ],
         ] = {}
+        self._rank2_batch_cache: (
+            tuple[
+                tuple[tuple[int, torch.device, torch.dtype], ...],
+                tuple[torch.Tensor, ...],
+                torch.Tensor,
+                torch.Tensor,
+                torch.Tensor,
+            ]
+            | None
+        ) = None
 
     def _runs_on_stage(self, stage: Enum) -> bool:
         """Return whether the hook participates in *stage*."""
@@ -363,6 +373,89 @@ class FixSymmetryHook:
         ) / self.rotations[graph_index].shape[0]
         return inv_cell @ projected @ inv_cell.T
 
+    def _rank2_batch_rotations(
+        self,
+        reference: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Return padded rotations, normalized weights, and active lanes."""
+        for graph_index in range(len(self.rotations)):
+            self._graph_symmetry(graph_index, reference)
+        sources = tuple(self.rotations)
+        cache_key = tuple(
+            (source._version, source.device, source.dtype) for source in sources
+        )
+        cached = self._rank2_batch_cache
+        if (
+            cached is None
+            or cached[0] != cache_key
+            or any(
+                cached_source is not source
+                for cached_source, source in zip(cached[1], sources, strict=True)
+            )
+        ):
+            graph_rotations = []
+            graph_multiplicities = []
+            for graph_index in range(len(sources)):
+                unique_rotations, multiplicities = self._rank2_rotations(
+                    graph_index, reference
+                )
+                graph_rotations.append(unique_rotations)
+                graph_multiplicities.append(multiplicities)
+
+            max_rotations = max(rotation.shape[0] for rotation in graph_rotations)
+            padded_rotations = reference.new_zeros(len(sources), max_rotations, 3, 3)
+            weights = reference.new_zeros(len(sources), max_rotations)
+            active = torch.zeros(
+                len(sources),
+                max_rotations,
+                dtype=torch.bool,
+                device=reference.device,
+            )
+            for graph_index, (rotations, multiplicities) in enumerate(
+                zip(graph_rotations, graph_multiplicities, strict=True)
+            ):
+                count = rotations.shape[0]
+                padded_rotations[graph_index, :count].copy_(rotations)
+                weights[graph_index, :count].copy_(
+                    multiplicities / sources[graph_index].shape[0]
+                )
+                active[graph_index, :count] = True
+            cached = (
+                cache_key,
+                sources,
+                padded_rotations,
+                weights,
+                active,
+            )
+            self._rank2_batch_cache = cached
+        return cached[2], cached[3], cached[4]
+
+    def _project_rank2_batch(
+        self,
+        tensors: torch.Tensor,
+        cells: torch.Tensor,
+    ) -> torch.Tensor:
+        """Apply the Cartesian rank-2 projector to all graphs together."""
+        expected_shape = (len(self.rotations), 3, 3)
+        if tensors.shape != expected_shape:
+            raise ValueError(
+                "FixSymmetryHook rank-2 tensors must have shape "
+                f"{list(expected_shape)}, got {list(tensors.shape)}."
+            )
+        cells = cells.to(device=tensors.device, dtype=tensors.dtype)
+        rotations, weights, active = self._rank2_batch_rotations(tensors)
+        inv_cells = torch.linalg.inv_ex(cells, check_errors=False).inverse
+        scaled_tensors = cells @ tensors @ cells.transpose(-1, -2)
+        transformed = torch.matmul(
+            rotations.transpose(-1, -2),
+            torch.matmul(scaled_tensors[:, None], rotations),
+        )
+        # Padding can produce non-finite values when the input is non-finite.
+        # Mask those lanes before weighting so 0 * inf cannot contaminate sums.
+        transformed.masked_fill_(~active[..., None, None], 0)
+        projected = (transformed * weights[..., None, None]).sum(dim=1)
+        return inv_cells @ projected @ inv_cells.transpose(-1, -2)
+
     def _project_rank1(self, vectors: torch.Tensor, cells: torch.Tensor) -> None:
         """Project a concatenated per-atom rank-1 tensor in-place."""
         with torch.no_grad():
@@ -381,18 +474,8 @@ class FixSymmetryHook:
 
     def _project_rank2(self, tensors: torch.Tensor, cells: torch.Tensor) -> None:
         """Project a batched per-graph rank-2 tensor in-place."""
-        if tensors.shape != (len(self.rotations), 3, 3):
-            raise ValueError(
-                "FixSymmetryHook rank-2 tensors must have shape "
-                f"[{len(self.rotations)}, 3, 3], got {list(tensors.shape)}."
-            )
         with torch.no_grad():
-            for graph_index in range(len(self.rotations)):
-                tensors[graph_index].copy_(
-                    self._project_rank2_graph(
-                        tensors[graph_index], cells[graph_index], graph_index
-                    )
-                )
+            tensors.copy_(self._project_rank2_batch(tensors, cells))
 
     def _project_position_and_cell_steps(self, batch: Batch) -> None:
         """Project the coordinate and deformation steps made by pre-update."""
@@ -444,13 +527,12 @@ class FixSymmetryHook:
                         UserWarning,
                         stacklevel=2,
                     )
-                for graph_index in range(batch.num_graphs):
-                    old_cell = self._saved_cells[graph_index]
-                    new_cell = batch.cell[graph_index]
-                    projected = self._project_rank2_graph(
-                        delta_deformations[graph_index], old_cell, graph_index
-                    )
-                    new_cell.copy_(old_cell @ (projected + identity).T)
+                projected = self._project_rank2_batch(
+                    delta_deformations, self._saved_cells
+                )
+                batch.cell.copy_(
+                    self._saved_cells @ (projected + identity).transpose(-1, -2)
+                )
 
         if self.adjust_positions:
             with torch.no_grad():
@@ -505,21 +587,16 @@ class FixSymmetryHook:
                         f"[{batch.num_graphs}, 3, 3], got {list(value.shape)}."
                     )
                 with torch.no_grad():
-                    for graph_index in range(batch.num_graphs):
-                        cell = batch.cell[graph_index].to(
-                            device=value.device, dtype=value.dtype
-                        )
-                        # Optimizers store Hdot, whereas the symmetry projector
-                        # acts on the deformation-rate tensor (inv(H) @ Hdot).T.
-                        deformation_rate = torch.linalg.solve_ex(
-                            cell,
-                            value[graph_index],
-                            check_errors=False,
-                        ).result.T
-                        projected = self._project_rank2_graph(
-                            deformation_rate, cell, graph_index
-                        )
-                        value[graph_index].copy_(cell @ projected.T)
+                    cells = batch.cell.to(device=value.device, dtype=value.dtype)
+                    # Optimizers store Hdot, whereas the symmetry projector
+                    # acts on the deformation-rate tensor (inv(H) @ Hdot).T.
+                    deformation_rates = torch.linalg.solve_ex(
+                        cells,
+                        value,
+                        check_errors=False,
+                    ).result.transpose(-1, -2)
+                    projected = self._project_rank2_batch(deformation_rates, cells)
+                    value.copy_(cells @ projected.transpose(-1, -2))
 
     def __call__(self, ctx: DynamicsContext, stage: Enum) -> None:
         """Apply symmetry constraints at the appropriate dynamics stage."""
