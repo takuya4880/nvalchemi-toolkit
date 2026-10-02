@@ -4,6 +4,9 @@
 
 ### Added
 
+- Batched `FixSymmetryHook` for ASE/spglib-derived space-group constraints in
+  standalone FIRE and FIRE2 fixed- or variable-cell geometry relaxation.
+
 - Domain decomposition for distributed inference and dynamics: a spatial halo
   strategy and a graph-parallel strategy, both driven by a declarative
   `MLIPSpec` a model wrapper publishes as `distribution_spec`. Ewald, PME,
