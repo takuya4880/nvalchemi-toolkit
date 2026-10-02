@@ -449,13 +449,19 @@ def benchmark_batch(
         optimizer = make_optimizer(batch, model)
         reference_symmetry = batch_symmetry_ids(batch)
 
+        print(
+            f"Benchmarking batch={batch_size} with {warmup_steps} warm-up "
+            f"and {timed_steps} timed steps..."
+        )
         if warmup_steps:
             batch = optimizer.run(batch, n_steps=warmup_steps)
+            print(f"  Warm-up completed, fmax={graph_fmax(batch).max():.4e} eV/Å")
         synchronize(device)
         start = time.perf_counter()
         batch = optimizer.run(batch, n_steps=timed_steps)
         synchronize(device)
         elapsed_samples.append(time.perf_counter() - start)
+        print(f"  Timed steps completed, fmax={graph_fmax(batch).max():.4e} eV/Å")
 
         observed_symmetry = batch_symmetry_ids(batch)
         if observed_symmetry != reference_symmetry:
@@ -516,7 +522,7 @@ def main() -> None:
         f"({benchmark_steps} timed steps, {benchmark_repeats} repeats, median)"
     )
     print(
-        "batch  elapsed (s)  structure-steps/s  vs batch=1*  "
+        "batch  n_atoms  elapsed (s)  structure-steps/s  vs batch=1*  "
         "estimated serial (s)  speedup"
     )
     for batch_size in benchmark_batch_sizes:
@@ -526,8 +532,9 @@ def main() -> None:
         baseline_throughput = benchmark_steps / baseline_per_structure
         throughput_ratio = throughput / baseline_throughput
         speedup = estimated_serial / elapsed
+        n_atoms = sum(len(make_crystal(CRYSTALS[0])) for _ in range(batch_size))
         print(
-            f"{batch_size:5d}  {elapsed:11.5f}  {throughput:12.3f}  "
+            f"{batch_size:5d}  {n_atoms:5d}  {elapsed:11.5f}  {throughput:12.3f}  "
             f"{throughput_ratio:11.2f}x  {estimated_serial:20.5f}  "
             f"{speedup:7.2f}x"
         )
