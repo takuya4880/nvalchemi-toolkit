@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import math
 import warnings
+from dataclasses import dataclass
 from enum import Enum
 
 import torch
@@ -28,6 +29,25 @@ from nvalchemi.dynamics.base import DynamicsStage
 from nvalchemi.hooks._context import DynamicsContext
 
 __all__ = ["FixSymmetryHook"]
+
+
+@dataclass(slots=True)
+class _Rank1BatchCache:
+    """Packed metadata for the batched rank-1 projector."""
+
+    rotation_keys: tuple[tuple[int, torch.device, torch.dtype], ...]
+    map_keys: tuple[tuple[int, torch.device, torch.dtype], ...]
+    rotation_sources: tuple[torch.Tensor, ...]
+    map_sources: tuple[torch.Tensor, ...]
+    batch_ptr_values: tuple[int, ...]
+    reference_device: torch.device
+    reference_dtype: torch.dtype
+    packed_rotations: torch.Tensor
+    source_indices: torch.Tensor
+    destination_indices: torch.Tensor
+    operation_indices: torch.Tensor
+    atom_graph: torch.Tensor
+    normalizer: torch.Tensor
 
 
 @OptionalDependency.ASE.require
@@ -212,6 +232,7 @@ class FixSymmetryHook:
         self._saved_positions: torch.Tensor | None = None
         self._saved_cells: torch.Tensor | None = None
         self._awaiting_after_pre_update = False
+        self._rank1_batch_cache: _Rank1BatchCache | None = None
         self._rank2_rotation_cache: dict[
             int,
             tuple[
@@ -328,6 +349,144 @@ class FixSymmetryHook:
             projected_t.scatter_add_(1, destinations, values)
         projected_t /= rotations.shape[0]
         return (cell.to(device=vectors.device, dtype=vectors.dtype).T @ projected_t).T
+
+    def _rank1_batch_metadata(self, reference: torch.Tensor) -> _Rank1BatchCache:
+        """Return exact-size packed metadata for all rank-1 operations."""
+        for graph_index in range(len(self.rotations)):
+            self._graph_symmetry(graph_index, reference)
+        rotation_sources = tuple(self.rotations)
+        map_sources = tuple(self.symm_maps)
+        rotation_keys = tuple(
+            (source._version, source.device, source.dtype)
+            for source in rotation_sources
+        )
+        map_keys = tuple(
+            (source._version, source.device, source.dtype) for source in map_sources
+        )
+        cached = self._rank1_batch_cache
+        if (
+            cached is not None
+            and cached.rotation_keys == rotation_keys
+            and cached.map_keys == map_keys
+            and all(
+                cached_source is source
+                for cached_source, source in zip(
+                    cached.rotation_sources, rotation_sources, strict=True
+                )
+            )
+            and all(
+                cached_source is source
+                for cached_source, source in zip(
+                    cached.map_sources, map_sources, strict=True
+                )
+            )
+            and cached.batch_ptr_values == self._batch_ptr_values
+            and cached.reference_device == reference.device
+            and cached.reference_dtype == reference.dtype
+        ):
+            return cached
+
+        packed_rotations = []
+        source_indices = []
+        destination_indices = []
+        operation_indices = []
+        atom_graph = torch.empty(
+            self._batch_ptr_values[-1],
+            dtype=torch.long,
+            device=reference.device,
+        )
+        normalizer = reference.new_empty(self._batch_ptr_values[-1])
+        operation_offset = 0
+        for graph_index, (start, end) in enumerate(
+            zip(
+                self._batch_ptr_values[:-1],
+                self._batch_ptr_values[1:],
+                strict=True,
+            )
+        ):
+            rotations = rotation_sources[graph_index]
+            symm_map = map_sources[graph_index]
+            atom_count = end - start
+            if rotations.ndim != 3 or rotations.shape[1:] != (3, 3):
+                raise ValueError(
+                    "FixSymmetryHook rotations must have shape [S, 3, 3], got "
+                    f"{list(rotations.shape)}."
+                )
+            if symm_map.shape != (rotations.shape[0], atom_count):
+                raise ValueError(
+                    "FixSymmetryHook symmetry maps must have shape "
+                    f"[{rotations.shape[0]}, {atom_count}], got "
+                    f"{list(symm_map.shape)}."
+                )
+
+            operation_count = rotations.shape[0]
+            atoms = torch.arange(start, end, device=reference.device)
+            operations = torch.arange(
+                operation_offset,
+                operation_offset + operation_count,
+                device=reference.device,
+            )
+            packed_rotations.append(rotations)
+            source_indices.append(atoms.repeat(operation_count))
+            destination_indices.append(symm_map.reshape(-1) + start)
+            operation_indices.append(operations.repeat_interleave(atom_count))
+            atom_graph[start:end] = graph_index
+            normalizer[start:end] = operation_count
+            operation_offset += operation_count
+
+        cached = _Rank1BatchCache(
+            rotation_keys=rotation_keys,
+            map_keys=map_keys,
+            rotation_sources=rotation_sources,
+            map_sources=map_sources,
+            batch_ptr_values=self._batch_ptr_values,
+            reference_device=reference.device,
+            reference_dtype=reference.dtype,
+            packed_rotations=torch.cat(packed_rotations),
+            source_indices=torch.cat(source_indices),
+            destination_indices=torch.cat(destination_indices),
+            operation_indices=torch.cat(operation_indices),
+            atom_graph=atom_graph,
+            normalizer=normalizer,
+        )
+        self._rank1_batch_cache = cached
+        return cached
+
+    def _project_rank1_batch(
+        self,
+        vectors: torch.Tensor,
+        cells: torch.Tensor,
+    ) -> torch.Tensor:
+        """Apply the Cartesian rank-1 projector to all graphs together."""
+        expected_shape = (self._batch_ptr_values[-1], 3)
+        if vectors.shape != expected_shape:
+            raise ValueError(
+                "FixSymmetryHook rank-1 vectors must have shape "
+                f"{list(expected_shape)}, got {list(vectors.shape)}."
+            )
+        cells = cells.to(device=vectors.device, dtype=vectors.dtype)
+        metadata = self._rank1_batch_metadata(vectors)
+        inv_cells = torch.linalg.inv_ex(cells, check_errors=False).inverse
+        scaled_vectors = torch.bmm(
+            vectors.unsqueeze(1), inv_cells[metadata.atom_graph]
+        ).squeeze(1)
+        projected = torch.zeros_like(vectors)
+        bytes_per_pair = max(
+            1,
+            15 * vectors.element_size() + 3 * metadata.source_indices.element_size(),
+        )
+        chunk_size = max(1, self._projector_workspace_bytes // bytes_per_pair)
+        pair_count = metadata.source_indices.shape[0]
+        for start in range(0, pair_count, chunk_size):
+            end = min(start + chunk_size, pair_count)
+            transformed = torch.bmm(
+                metadata.packed_rotations[metadata.operation_indices[start:end]],
+                scaled_vectors[metadata.source_indices[start:end]].unsqueeze(-1),
+            ).squeeze(-1)
+            destinations = metadata.destination_indices[start:end, None].expand(-1, 3)
+            projected.scatter_add_(0, destinations, transformed)
+        projected /= metadata.normalizer[:, None]
+        return torch.bmm(projected.unsqueeze(1), cells[metadata.atom_graph]).squeeze(1)
 
     def _rank2_rotations(
         self,
@@ -459,18 +618,7 @@ class FixSymmetryHook:
     def _project_rank1(self, vectors: torch.Tensor, cells: torch.Tensor) -> None:
         """Project a concatenated per-atom rank-1 tensor in-place."""
         with torch.no_grad():
-            for graph_index, (start, end) in enumerate(
-                zip(
-                    self._batch_ptr_values[:-1],
-                    self._batch_ptr_values[1:],
-                    strict=True,
-                )
-            ):
-                vectors[start:end].copy_(
-                    self._project_rank1_graph(
-                        vectors[start:end], cells[graph_index], graph_index
-                    )
-                )
+            vectors.copy_(self._project_rank1_batch(vectors, cells))
 
     def _project_rank2(self, tensors: torch.Tensor, cells: torch.Tensor) -> None:
         """Project a batched per-graph rank-2 tensor in-place."""

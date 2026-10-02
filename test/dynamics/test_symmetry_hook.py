@@ -471,6 +471,152 @@ class TestFixSymmetryHook:
         )
 
     @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_packed_rank1_matches_mixed_batch_oracle(
+        self,
+        dtype: torch.dtype,
+        device: str,
+    ) -> None:
+        """Mixed atom and operation counts use one batched inverse."""
+        batch = _make_batch(device, dtype)
+        hook = FixSymmetryHook(batch)
+        assert hook.rotations[0].shape[0] != hook.rotations[1].shape[0]
+        vectors = torch.tensor(
+            [[1.0, 0.2, 0.7], [0.4, -0.5, 0.6], [-0.3, 0.8, 1.4]],
+            dtype=dtype,
+            device=device,
+        )
+        expected = torch.cat(
+            [
+                _expected_rank1(
+                    vectors[start:end],
+                    batch.cell[graph_index],
+                    hook.rotations[graph_index],
+                    hook.symm_maps[graph_index],
+                )
+                for graph_index, (start, end) in enumerate(
+                    zip(
+                        hook._batch_ptr_values[:-1],
+                        hook._batch_ptr_values[1:],
+                        strict=True,
+                    )
+                )
+            ]
+        )
+        original_inv_ex = torch.linalg.inv_ex
+
+        with patch.object(
+            torch.linalg,
+            "inv_ex",
+            wraps=original_inv_ex,
+        ) as inv_ex:
+            projected = hook._project_rank1_batch(vectors, batch.cell)
+
+        tolerance = 2e-5 if dtype == torch.float32 else 1e-12
+        assert torch.allclose(projected, expected, atol=tolerance, rtol=tolerance)
+        assert inv_ex.call_count == 1
+        assert inv_ex.call_args.args[0].shape == (batch.num_graphs, 3, 3)
+        assert inv_ex.call_args.kwargs["check_errors"] is False
+
+    def test_packed_rank1_accumulates_non_bijective_maps(self) -> None:
+        """Repeated destinations retain every source contribution."""
+        batch = _make_batch()
+        hook = FixSymmetryHook(batch)
+        _set_controlled_symmetry(hook, batch)
+        hook.symm_maps[1] = torch.tensor([[0, 0], [1, 1]])
+        vectors = torch.tensor(
+            [[1.0, 0.2, 0.7], [0.4, -0.5, 0.6], [-0.3, 0.8, 1.4]],
+            dtype=batch.positions.dtype,
+        )
+        expected = torch.cat(
+            [
+                hook._project_rank1_graph(
+                    vectors[start:end], batch.cell[graph_index], graph_index
+                )
+                for graph_index, (start, end) in enumerate(
+                    zip(
+                        hook._batch_ptr_values[:-1],
+                        hook._batch_ptr_values[1:],
+                        strict=True,
+                    )
+                )
+            ]
+        )
+
+        projected = hook._project_rank1_batch(vectors, batch.cell)
+
+        assert torch.allclose(projected, expected)
+
+    def test_packed_rank1_chunk_boundaries_do_not_change_projection(self) -> None:
+        """One-pair chunks match an unchunked packed projection."""
+        batch = _make_batch()
+        hook = FixSymmetryHook(batch)
+        _set_controlled_symmetry(hook, batch)
+        vectors = torch.tensor(
+            [[1.0, 0.2, 0.7], [0.4, -0.5, 0.6], [-0.3, 0.8, 1.4]],
+            dtype=batch.positions.dtype,
+        )
+
+        hook._projector_workspace_bytes = 1
+        chunked = hook._project_rank1_batch(vectors, batch.cell)
+        hook._projector_workspace_bytes = 1 << 30
+        unchunked = hook._project_rank1_batch(vectors, batch.cell)
+
+        assert torch.allclose(chunked, unchunked)
+
+    def test_packed_rank1_cache_tracks_rotation_and_map_sources(self) -> None:
+        """Packed metadata invalidates on mutation and replacement."""
+        batch = _make_batch()
+        hook = FixSymmetryHook(batch)
+        _set_controlled_symmetry(hook, batch)
+        first = hook._rank1_batch_metadata(batch.positions)
+
+        hook.rotations[1].copy_(hook.rotations[1].flip(0))
+        rotation_mutated = hook._rank1_batch_metadata(batch.positions)
+        assert rotation_mutated is not first
+
+        hook.symm_maps[1].copy_(hook.symm_maps[1].flip(0))
+        map_mutated = hook._rank1_batch_metadata(batch.positions)
+        assert map_mutated is not rotation_mutated
+
+        hook.rotations[0] = hook.rotations[0].clone()
+        rotation_replaced = hook._rank1_batch_metadata(batch.positions)
+        assert rotation_replaced is not map_mutated
+
+        hook.symm_maps[0] = hook.symm_maps[0].clone()
+        map_replaced = hook._rank1_batch_metadata(batch.positions)
+        assert map_replaced is not rotation_replaced
+
+    def test_position_lifecycle_keeps_graph_rank1_projector(self) -> None:
+        """Only position steps stay graph-local; force and velocity are packed."""
+        batch = _make_batch()
+        hook = FixSymmetryHook(batch, adjust_cell=False)
+        ctx = _context(batch)
+
+        with (
+            patch.object(
+                hook,
+                "_project_rank1_graph",
+                wraps=hook._project_rank1_graph,
+            ) as project_graph,
+            patch.object(
+                hook,
+                "_project_rank1_batch",
+                wraps=hook._project_rank1_batch,
+            ) as project_batch,
+        ):
+            hook(ctx, DynamicsStage.BEFORE_PRE_UPDATE)
+            batch.positions.add_(0.01)
+            hook(ctx, DynamicsStage.AFTER_PRE_UPDATE)
+            assert project_graph.call_count == batch.num_graphs
+            assert project_batch.call_count == 1
+
+            hook(ctx, DynamicsStage.AFTER_COMPUTE)
+            hook(ctx, DynamicsStage.AFTER_POST_UPDATE)
+
+        assert project_graph.call_count == batch.num_graphs
+        assert project_batch.call_count == 3
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
     def test_rank2_weights_uneven_duplicate_rotations(
         self,
         dtype: torch.dtype,
