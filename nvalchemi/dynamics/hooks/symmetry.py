@@ -74,6 +74,7 @@ class FixSymmetryHook:
 
     stage = DynamicsStage.BEFORE_PRE_UPDATE
     supports_fused_stage = False
+    _projector_workspace_bytes = 64 * 1024**2
 
     @staticmethod
     def _ase_symmetry_data(
@@ -210,6 +211,15 @@ class FixSymmetryHook:
         self._saved_positions: torch.Tensor | None = None
         self._saved_cells: torch.Tensor | None = None
         self._awaiting_after_pre_update = False
+        self._rank2_rotation_cache: dict[
+            int,
+            tuple[
+                tuple[int, torch.device, torch.dtype],
+                torch.Tensor,
+                torch.Tensor,
+                torch.Tensor,
+            ],
+        ] = {}
 
     def _runs_on_stage(self, stage: Enum) -> bool:
         """Return whether the hook participates in *stage*."""
@@ -273,10 +283,61 @@ class FixSymmetryHook:
         inv_cell = torch.linalg.inv(cell.to(device=vectors.device, dtype=vectors.dtype))
         scaled_vectors_t = inv_cell.T @ vectors.T
         projected_t = torch.zeros_like(scaled_vectors_t)
-        for rotation, atom_map in zip(rotations, symm_map, strict=True):
-            projected_t[:, atom_map] += rotation @ scaled_vectors_t
+        if rotations.ndim != 3 or rotations.shape[1:] != (3, 3):
+            raise ValueError(
+                "FixSymmetryHook rotations must have shape [S, 3, 3], got "
+                f"{list(rotations.shape)}."
+            )
+        if symm_map.shape != (rotations.shape[0], vectors.shape[0]):
+            raise ValueError(
+                "FixSymmetryHook symmetry maps must have shape "
+                f"[{rotations.shape[0]}, {vectors.shape[0]}], got "
+                f"{list(symm_map.shape)}."
+            )
+
+        # Account for the batched matmul result, its flattened permutation,
+        # and a conservatively materialized scatter index. ``scatter_add_``
+        # also preserves every contribution for non-bijective maps instead of
+        # relying on advanced-index assignment semantics.
+        bytes_per_operation = max(
+            1,
+            vectors.shape[0]
+            * (6 * vectors.element_size() + 3 * symm_map.element_size())
+            + 9 * rotations.element_size(),
+        )
+        chunk_size = max(1, self._projector_workspace_bytes // bytes_per_operation)
+        for start in range(0, rotations.shape[0], chunk_size):
+            end = min(start + chunk_size, rotations.shape[0])
+            transformed = torch.matmul(rotations[start:end], scaled_vectors_t)
+            values = transformed.permute(1, 0, 2).reshape(3, -1)
+            destinations = symm_map[start:end].reshape(1, -1).expand(3, -1)
+            projected_t.scatter_add_(1, destinations, values)
         projected_t /= rotations.shape[0]
         return (cell.to(device=vectors.device, dtype=vectors.dtype).T @ projected_t).T
+
+    def _rank2_rotations(
+        self,
+        graph_index: int,
+        reference: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Return unique rotations and exact multiplicities for one graph."""
+        rotations, _ = self._graph_symmetry(graph_index, reference)
+        cache_key = (
+            rotations._version,
+            rotations.device,
+            rotations.dtype,
+        )
+        cached = self._rank2_rotation_cache.get(graph_index)
+        if cached is None or cached[0] != cache_key or cached[1] is not rotations:
+            unique_rotations, multiplicities = torch.unique(
+                rotations,
+                dim=0,
+                return_counts=True,
+            )
+            multiplicities = multiplicities.to(dtype=reference.dtype)
+            cached = (cache_key, rotations, unique_rotations, multiplicities)
+            self._rank2_rotation_cache[graph_index] = cached
+        return cached[2], cached[3]
 
     def _project_rank2_graph(
         self,
@@ -285,14 +346,17 @@ class FixSymmetryHook:
         graph_index: int,
     ) -> torch.Tensor:
         """Apply ASE's Cartesian rank-2 symmetry projector to one graph."""
-        rotations, _ = self._graph_symmetry(graph_index, tensor)
+        rotations, multiplicities = self._rank2_rotations(graph_index, tensor)
         cell = cell.to(device=tensor.device, dtype=tensor.dtype)
         inv_cell = torch.linalg.inv(cell)
         scaled_tensor = cell @ tensor @ cell.T
-        projected = torch.zeros_like(scaled_tensor)
-        for rotation in rotations:
-            projected += rotation.T @ scaled_tensor @ rotation
-        projected /= rotations.shape[0]
+        transformed = torch.matmul(
+            rotations.transpose(-1, -2),
+            torch.matmul(scaled_tensor, rotations),
+        )
+        projected = (transformed * multiplicities.reshape(-1, 1, 1)).sum(
+            dim=0
+        ) / self.rotations[graph_index].shape[0]
         return inv_cell @ projected @ inv_cell.T
 
     def _project_rank1(self, vectors: torch.Tensor, cells: torch.Tensor) -> None:

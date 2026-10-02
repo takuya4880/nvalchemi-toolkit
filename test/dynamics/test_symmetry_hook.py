@@ -62,6 +62,33 @@ def _make_batch(device: str = "cpu", dtype: torch.dtype = torch.float64) -> Batc
     return batch
 
 
+def _make_space_group_batch(
+    structure: str,
+    device: str,
+    dtype: torch.dtype,
+) -> Batch:
+    """Create one representative structure for projector-oracle tests."""
+    from ase import Atoms
+    from ase.build import bulk
+
+    if structure == "p1":
+        atoms = Atoms(
+            numbers=[14, 8],
+            scaled_positions=[[0.13, 0.21, 0.37], [0.61, 0.42, 0.89]],
+            cell=[[3.1, 0.0, 0.0], [0.4, 3.7, 0.0], [0.2, 0.3, 4.2]],
+            pbc=True,
+        )
+    elif structure == "wurtzite":
+        atoms = bulk("ZnS", "wurtzite", a=3.82, c=6.26)
+    elif structure == "diamond":
+        atoms = bulk("Si", "diamond", a=5.43, cubic=True)
+    else:
+        raise ValueError(f"Unknown test structure: {structure}")
+
+    data = AtomicData.from_atoms(atoms, device=device, dtype=dtype)
+    return Batch.from_data_list([data])
+
+
 def _context(batch: Batch, state: object | None = None) -> DynamicsContext:
     """Create a hook context with an optional optimizer state."""
     workflow = SimpleNamespace(_state=state) if state is not None else None
@@ -347,6 +374,178 @@ class TestFixSymmetryHook:
             hook._project_rank2_graph(tensor, cell, graph_index),
             torch.from_numpy(expected_tensor),
         )
+
+    @pytest.mark.parametrize("structure", ["p1", "wurtzite", "diamond"])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_vectorized_projectors_match_ase_across_space_groups(
+        self,
+        structure: str,
+        dtype: torch.dtype,
+        device: str,
+    ) -> None:
+        """Projectors match ASE for low, nonsymmorphic, and cubic symmetry."""
+        from ase.spacegroup.symmetrize import symmetrize_rank1, symmetrize_rank2
+
+        batch = _make_space_group_batch(structure, device, dtype)
+        hook = FixSymmetryHook(batch)
+        atom_count = batch.positions.shape[0]
+        vectors = (
+            torch.arange(
+                atom_count * 3,
+                dtype=dtype,
+                device=device,
+            ).reshape(atom_count, 3)
+            / 7.0
+            - 0.4
+        )
+        tensor = torch.tensor(
+            [[1.1, 0.2, -0.3], [0.4, -0.7, 0.5], [0.6, -0.8, 1.3]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = batch.cell[0]
+        rotations = hook.rotations[0]
+        translations = hook.translations[0]
+        symm_map = hook.symm_maps[0]
+
+        expected_vectors = symmetrize_rank1(
+            cell.detach().cpu().numpy(),
+            torch.linalg.inv(cell).detach().cpu().numpy(),
+            vectors.detach().cpu().numpy(),
+            rotations.detach().cpu().numpy(),
+            translations.detach().cpu().numpy(),
+            symm_map.detach().cpu().numpy(),
+        )
+        expected_tensor = symmetrize_rank2(
+            cell.detach().cpu().numpy(),
+            torch.linalg.inv(cell).detach().cpu().numpy(),
+            tensor.detach().cpu().numpy(),
+            rotations.detach().cpu().numpy(),
+        )
+        tolerance = 2e-5 if dtype == torch.float32 else 1e-12
+
+        assert torch.allclose(
+            hook._project_rank1_graph(vectors, cell, 0).cpu(),
+            torch.from_numpy(expected_vectors).to(dtype=dtype),
+            atol=tolerance,
+            rtol=tolerance,
+        )
+        assert torch.allclose(
+            hook._project_rank2_graph(tensor, cell, 0).cpu(),
+            torch.from_numpy(expected_tensor).to(dtype=dtype),
+            atol=tolerance,
+            rtol=tolerance,
+        )
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_rank1_preserves_maps_for_duplicate_rotations(
+        self,
+        dtype: torch.dtype,
+        device: str,
+    ) -> None:
+        """Equal rotations with distinct atom maps remain distinct operations."""
+        batch = _make_batch(device, dtype)
+        hook = FixSymmetryHook(batch)
+        graph_index = 1
+        identity = torch.eye(3, dtype=dtype, device=device)
+        rotations = torch.stack([identity, identity, identity])
+        symm_map = torch.tensor(
+            [[0, 1], [1, 0], [0, 1]],
+            dtype=torch.long,
+            device=device,
+        )
+        hook.rotations[graph_index] = rotations
+        hook.translations[graph_index] = torch.zeros(3, 3, dtype=dtype, device=device)
+        hook.symm_maps[graph_index] = symm_map
+        vectors = torch.tensor(
+            [[1.2, -0.7, 0.3], [-0.4, 0.8, 2.1]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = batch.cell[graph_index]
+        expected = _expected_rank1(vectors, cell, rotations, symm_map)
+
+        assert torch.allclose(
+            hook._project_rank1_graph(vectors, cell, graph_index),
+            expected,
+        )
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_rank2_weights_uneven_duplicate_rotations(
+        self,
+        dtype: torch.dtype,
+        device: str,
+    ) -> None:
+        """Rank-2 compression preserves multiplicities and invalidates caches."""
+        batch = _make_batch(device, dtype)
+        hook = FixSymmetryHook(batch)
+        graph_index = 1
+        identity = torch.eye(3, dtype=dtype, device=device)
+        c2z = torch.diag(torch.tensor([-1.0, -1.0, 1.0], dtype=dtype, device=device))
+        tensor = torch.tensor(
+            [[1.0, 0.2, 0.7], [0.4, -0.5, 0.6], [-0.3, 0.8, 1.4]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = batch.cell[graph_index]
+
+        rotations = torch.stack([identity, identity, identity, c2z])
+        hook.rotations[graph_index] = rotations
+        expected = _expected_rank2(tensor, cell, rotations)
+        assert torch.allclose(
+            hook._project_rank2_graph(tensor, cell, graph_index),
+            expected,
+        )
+
+        # Mutate the source tensor in-place after priming the derived cache.
+        # The tensor identity stays fixed, so invalidation must observe its
+        # version rather than only replacement of the list entry.
+        updated_rotations = torch.stack([identity, c2z, c2z, c2z])
+        hook.rotations[graph_index].copy_(updated_rotations)
+        updated_expected = _expected_rank2(tensor, cell, updated_rotations)
+        assert torch.allclose(
+            hook._project_rank2_graph(tensor, cell, graph_index),
+            updated_expected,
+        )
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    def test_rank1_chunk_boundaries_do_not_change_projection(
+        self,
+        dtype: torch.dtype,
+        device: str,
+    ) -> None:
+        """Single-operation chunks match an unchunked rank-1 projection."""
+        batch = _make_batch(device, dtype)
+        hook = FixSymmetryHook(batch)
+        graph_index = 1
+        identity = torch.eye(3, dtype=dtype, device=device)
+        c2x = torch.diag(torch.tensor([1.0, -1.0, -1.0], dtype=dtype, device=device))
+        c2y = torch.diag(torch.tensor([-1.0, 1.0, -1.0], dtype=dtype, device=device))
+        rotations = torch.stack([identity, c2x, c2y, identity, c2x])
+        symm_map = torch.tensor(
+            [[0, 1], [1, 0], [0, 1], [1, 0], [0, 1]],
+            dtype=torch.long,
+            device=device,
+        )
+        hook.rotations[graph_index] = rotations
+        hook.translations[graph_index] = torch.zeros(5, 3, dtype=dtype, device=device)
+        hook.symm_maps[graph_index] = symm_map
+        vectors = torch.tensor(
+            [[0.4, -0.2, 0.8], [-0.1, 0.7, 0.3]],
+            dtype=dtype,
+            device=device,
+        )
+        cell = batch.cell[graph_index]
+
+        hook._projector_workspace_bytes = 1
+        chunked = hook._project_rank1_graph(vectors, cell, graph_index)
+        hook._projector_workspace_bytes = 1 << 30
+        unchunked = hook._project_rank1_graph(vectors, cell, graph_index)
+        expected = _expected_rank1(vectors, cell, rotations, symm_map)
+        tolerance = 2e-5 if dtype == torch.float32 else 1e-12
+
+        assert torch.allclose(chunked, unchunked, atol=tolerance, rtol=tolerance)
+        assert torch.allclose(chunked, expected, atol=tolerance, rtol=tolerance)
 
     @pytest.mark.parametrize("field", ["cell_velocity", "cell_velocities"])
     def test_cell_velocity_projects_deformation_rate(
