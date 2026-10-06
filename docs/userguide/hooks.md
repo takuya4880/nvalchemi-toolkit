@@ -222,6 +222,15 @@ hook = ConvergenceHook(
 In a single-stage simulation (no status arguments), convergence simply causes
 those systems to stop being updated.
 
+### FixSymmetryHook
+
+{py:class}`~nvalchemi.dynamics.hooks.FixSymmetryHook` applies ASE/spglib
+space-group constraints to batched standalone FIRE or FIRE2 relaxation. It
+projects forces before convergence is evaluated and also constrains coordinate,
+cell, stress, and optimizer-velocity updates. See
+[Symmetry-constrained optimization](dynamics_simulations.md#symmetry-constrained-optimization)
+for setup, limitations, and an example.
+
 ### Dynamics LoggingHook
 
 {py:class}`~nvalchemi.dynamics.hooks.LoggingHook` records scalar observables

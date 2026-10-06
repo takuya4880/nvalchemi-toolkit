@@ -106,7 +106,7 @@ class NeighborListHook:
     read it.  An optional Verlet skin buffer avoids rebuilding the list
     every step: the list is only recomputed when the maximum raw Cartesian
     displacement since the last build exceeds ``config.skin / 2``, or when
-    the set of active systems changes (detected via ``system_id``).
+    inflight refill replaces the active :class:`~nvalchemi.data.Batch`.
 
     For ``MATRIX`` format the following tensors are written to the atoms
     group of the batch (and thus accessible as ``batch.neighbor_matrix``
@@ -181,6 +181,7 @@ class NeighborListHook:
         # re-allocation is needed (e.g. inflight batching with variable load).
         self._alloc_N: int | None = None
         self._alloc_B: int | None = None
+        self._active_batch_id: int | None = None
 
         # Staging buffers — persistent GPU tensors refreshed each step via
         # copy_() to avoid per-step dynamic allocation inside the dispatcher.
@@ -237,6 +238,18 @@ class NeighborListHook:
         batch_ptr = batch.batch_ptr  # (B+1,)
         N = batch.num_nodes
         B = batch.num_graphs
+
+        # Inflight refill creates a new Batch.  Shape checks alone cannot
+        # detect a same-size replacement, whose cached skin reference and
+        # algorithm-specific layout buffers belong to the previous systems.
+        batch_id = id(batch)
+        if self._active_batch_id != batch_id:
+            self._active_batch_id = batch_id
+            self._alloc_N = None
+            self._alloc_B = None
+            self._ref_positions = None
+            self._rebuild_flags = None
+            self._first_build = True
 
         # Detect PBC.  getattr avoids a try/except which is a graph break.
         pbc = getattr(batch, "pbc", None)  # (B, 3) bool or None

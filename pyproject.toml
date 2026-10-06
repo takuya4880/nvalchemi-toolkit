@@ -65,6 +65,7 @@ aimnet = [
 ]
 ase = [
     "ase>=3.27.0",
+    "spglib>=2.6.0",
 ]
 cu12 = [
     "nvalchemi-toolkit-ops[torch-cu12]>=0.4.1; sys_platform != 'darwin'",

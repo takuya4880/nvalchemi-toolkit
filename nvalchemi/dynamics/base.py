@@ -52,7 +52,7 @@ import sys
 import warnings
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -82,6 +82,7 @@ if TYPE_CHECKING:
 __all__ = [
     "Hook",
     "DynamicsStage",
+    "InflightTerminationReason",
     "ConvergenceHook",
     "DistributedPipeline",
     "BufferConfig",
@@ -178,6 +179,14 @@ class DynamicsStage(Enum):
     AFTER_POST_UPDATE = 6
     AFTER_STEP = 7
     ON_CONVERGE = 8
+
+
+class InflightTerminationReason(IntEnum):
+    """Reason a standalone inflight system left the active batch."""
+
+    ACTIVE = 0
+    CONVERGED = 1
+    MAX_STEPS = 2
 
 
 class _ConvergenceCriterion(BaseModel):
@@ -545,6 +554,10 @@ class _CommunicationMixin:
         self.max_batch_size = max_batch_size
         self.done = done
         self.sampler = sampler
+        if refill_frequency < 1:
+            raise ValueError(
+                f"refill_frequency must be at least 1, got {refill_frequency}."
+            )
         self.refill_frequency = refill_frequency
         if not device_type:
             device_type = "cuda" if torch.cuda.is_available() else "cpu"
@@ -1414,6 +1427,8 @@ class BaseDynamics(HookRegistryMixin, _CommunicationMixin):
         convergence_hook: Any = None,
         n_steps: int | None = None,
         exit_status: int = 1,
+        init_fn: Callable[[Batch], None] | None = None,
+        max_steps_per_system: int | None = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -1441,6 +1456,16 @@ class BaseDynamics(HookRegistryMixin, _CommunicationMixin):
             ``step()`` — their positions and velocities are preserved
             through the integrator. Default is 1. Subclasses like
             ``FusedStage`` may compute this dynamically.
+        init_fn : Callable[[Batch], None] | None, optional
+            Callback invoked on initial and replacement batches built from
+            ``sampler``. Use this to populate fields that are not stored in the
+            dataset, such as zero-valued forces or velocities. It is not called
+            on an initial ``batch`` passed explicitly.
+        max_steps_per_system : int | None, optional
+            Maximum standalone inflight steps for each system. Systems that
+            reach the limit graduate with
+            :attr:`InflightTerminationReason.MAX_STEPS`. ``None`` disables
+            the per-system limit. Default ``None``.
         **kwargs : Any
             Additional keyword arguments forwarded to the next class
             in the MRO (for cooperative multiple inheritance).
@@ -1458,6 +1483,13 @@ class BaseDynamics(HookRegistryMixin, _CommunicationMixin):
         self.convergence_hook = convergence_hook
         self.n_steps = n_steps
         self.exit_status = exit_status
+        self.init_fn = init_fn
+        if max_steps_per_system is not None and max_steps_per_system < 1:
+            raise ValueError(
+                "max_steps_per_system must be at least 1 when provided, got "
+                f"{max_steps_per_system}."
+            )
+        self.max_steps_per_system = max_steps_per_system
         self.model_config = model.model_config
         self.current_hook_stage: DynamicsStage | None = None
         self._init_hooks(hooks)
@@ -1563,6 +1595,27 @@ class BaseDynamics(HookRegistryMixin, _CommunicationMixin):
         if self.convergence_hook is None:
             return None
         return self.convergence_hook.evaluate(batch)
+
+    def _ensure_bookkeeping_fields(self, batch: Batch) -> None:
+        """Initialize registered graph-level bookkeeping fields when absent."""
+        for key, default_fn in self._bookkeeping_keys.items():
+            if getattr(batch, key, None) is None:
+                batch[key] = default_fn(batch.num_graphs, batch.device)
+
+    @staticmethod
+    def _ensure_standalone_inflight_fields(batch: Batch) -> None:
+        """Initialize per-system counters used by standalone inflight runs."""
+        if getattr(batch, "inflight_step_count", None) is None:
+            batch["inflight_step_count"] = torch.zeros(
+                batch.num_graphs, 1, dtype=torch.long, device=batch.device
+            )
+        if getattr(batch, "inflight_termination", None) is None:
+            batch["inflight_termination"] = torch.full(
+                (batch.num_graphs, 1),
+                InflightTerminationReason.ACTIVE,
+                dtype=torch.long,
+                device=batch.device,
+            )
 
     def _validate_model_outputs(self, outputs: ModelOutputs) -> None:
         """Validate that model outputs satisfy the dynamics requirements.
@@ -1951,11 +2004,16 @@ class BaseDynamics(HookRegistryMixin, _CommunicationMixin):
 
         return batch, converged
 
-    def run(self, batch: Batch, n_steps: int | None = None) -> Batch:
+    def run(
+        self, batch: Batch | None = None, n_steps: int | None = None
+    ) -> Batch | None:
         """
         Run the dynamics simulation for a specified number of steps.
 
-        This is a convenience method that repeatedly calls ``step()``.
+        This is a convenience method that repeatedly calls ``step()``. When a
+        sampler is configured, passing ``batch=None`` builds the initial batch
+        from the sampler and enables standalone inflight batching: converged
+        systems are graduated and periodically replaced with new samples.
         The step count can be set at construction time via the
         ``n_steps`` parameter, or passed directly to this method.
         A value passed here takes precedence over the instance
@@ -1963,8 +2021,9 @@ class BaseDynamics(HookRegistryMixin, _CommunicationMixin):
 
         Parameters
         ----------
-        batch : Batch
-            The initial batch of atomic data.
+        batch : Batch | None, optional
+            The initial batch of atomic data. If ``None``, an initial batch is
+            built from the configured sampler.
         n_steps : int | None, optional
             The number of steps to run.  If ``None``, falls back to
             ``self.n_steps``.  If both are ``None``, raises
@@ -1972,15 +2031,23 @@ class BaseDynamics(HookRegistryMixin, _CommunicationMixin):
 
         Returns
         -------
-        Batch
-            The batch after all steps have been executed.
+        Batch | None
+            The batch after all steps have been executed. Returns ``None``
+            when inflight sampling is exhausted and all systems graduate.
 
         Raises
         ------
         ValueError
-            If no step count is available (both the argument and
-            ``self.n_steps`` are ``None``).
+            If no step count is available, or if ``batch`` is ``None`` and no
+            sampler is configured.
         """
+        if batch is None:
+            if self.sampler is None:
+                raise ValueError("No batch provided and no sampler configured.")
+            batch = self.sampler.build_initial_batch().to(self.device)
+            if self.init_fn is not None:
+                self.init_fn(batch)
+
         resolved = n_steps if n_steps is not None else self.n_steps
         if resolved is None:
             raise ValueError(
@@ -1988,17 +2055,58 @@ class BaseDynamics(HookRegistryMixin, _CommunicationMixin):
                 "or set it at construction time via "
                 f"`{type(self).__name__}(..., n_steps=N)`."
             )
+
+        if self.sampler is not None:
+            self._ensure_bookkeeping_fields(batch)
+            self._ensure_standalone_inflight_fields(batch)
+
+        self.active_batch = batch
         self._open_hooks()
         try:
-            for _ in range(resolved):
+            for step_num in range(resolved):
                 batch, _converged = self.step(batch)
-                # Early exit when every system has satisfied the convergence
-                # criteria (sampler-free / Mode 1 only).
-                if (
-                    self.sampler is None
-                    and _converged is not None
-                    and _converged.numel() == batch.num_graphs
-                ):
+                self.active_batch = batch
+
+                if self.sampler is not None:
+                    # Standalone dynamics do not use status-migration hooks.
+                    # Graduate only systems that are still active; convergence
+                    # evaluation may also return already-graduated no-op rows
+                    # while they wait for the next refill boundary.
+                    status = batch.status.view(-1)
+                    active = status < self.exit_status
+                    step_counts = batch.inflight_step_count.view(-1)
+                    termination = batch.inflight_termination.view(-1)
+                    step_counts[active] += 1
+
+                    converged_mask = torch.zeros_like(active)
+                    if _converged is not None:
+                        active_converged = _converged[
+                            status[_converged] < self.exit_status
+                        ]
+                        converged_mask[active_converged] = True
+                        status[active_converged] = self.exit_status
+                        termination[active_converged] = (
+                            InflightTerminationReason.CONVERGED
+                        )
+
+                    if self.max_steps_per_system is not None:
+                        reached_limit = (
+                            active
+                            & ~converged_mask
+                            & (step_counts >= self.max_steps_per_system)
+                        )
+                        status[reached_limit] = self.exit_status
+                        termination[reached_limit] = InflightTerminationReason.MAX_STEPS
+
+                    if (step_num + 1) % self.refill_frequency == 0:
+                        result = self.refill_check(batch, self.exit_status)
+                        if result is None:
+                            self.active_batch = None
+                            return None
+                        batch = result
+                        self.active_batch = batch
+                # Preserve the original fixed-batch early-exit behaviour.
+                elif _converged is not None and _converged.numel() == batch.num_graphs:
                     break
         finally:
             self._close_hooks()
@@ -2094,11 +2202,19 @@ class BaseDynamics(HookRegistryMixin, _CommunicationMixin):
             max_count=max_new,
         )
 
+        def initialize_replacements(replacement_batch: Batch) -> None:
+            if self.init_fn is not None:
+                self.init_fn(replacement_batch)
+            if getattr(batch, "inflight_step_count", None) is not None:
+                self._ensure_standalone_inflight_fields(replacement_batch)
+
         if result is not None and replacements:
             repl_batch = Batch.from_data_list(replacements, device=batch.device)
+            initialize_replacements(repl_batch)
             result.append(repl_batch)
         elif result is None and replacements:
             result = Batch.from_data_list(replacements, device=batch.device)
+            initialize_replacements(result)
 
         if result is not None:
             n_total = result.num_graphs
@@ -2669,6 +2785,20 @@ class FusedStage(BaseDynamics):
     2
     """
 
+    @staticmethod
+    def _validate_fused_hook_support(hook: Hook) -> None:
+        """Reject hooks whose required lifecycle is unavailable when fused."""
+        if getattr(hook, "supports_fused_stage", True) is False:
+            raise ValueError(
+                "FusedStage does not support hook(s) that require lifecycle "
+                "stages omitted by fused execution: " + type(hook).__name__
+            )
+
+    def register_hook(self, hook: Hook, stage: Enum | None = None) -> None:
+        """Register an outer hook after validating fused-stage support."""
+        self._validate_fused_hook_support(hook)
+        super().register_hook(hook, stage=stage)
+
     def __init__(
         self,
         sub_stages: list[tuple[int, BaseDynamics]],
@@ -2697,11 +2827,11 @@ class FusedStage(BaseDynamics):
         compile_kwargs : dict[str, Any] | None, optional
             Keyword arguments for ``torch.compile``. Default ``None``.
         init_fn : Callable[[Batch], None] | None, optional
-            Optional callback invoked on the initial batch immediately after
-            ``sampler.build_initial_batch()`` returns, before the first step.
-            Use this to populate fields that the sampler does not set, such
-            as ``velocities`` or ``forces``.  Only called in Mode 2 (inflight
-            batching with ``batch=None``).  Default ``None``.
+            Optional callback invoked on each batch admitted from ``sampler``:
+            once after ``build_initial_batch()`` and again on replacement
+            batches. Use this to populate fields that the dataset does not
+            store, such as ``velocities`` or ``forces``. Only called in Mode 2
+            (inflight batching with ``batch=None``). Default ``None``.
         **kwargs : Any
             Additional keyword arguments forwarded to ``BaseDynamics``.
 
@@ -2712,6 +2842,10 @@ class FusedStage(BaseDynamics):
         """
         first_dynamics = sub_stages[0][1]
         model = first_dynamics.model
+
+        for _, dynamics in sub_stages:
+            for hook in dynamics.hooks:
+                self._validate_fused_hook_support(hook)
 
         device_types = {dyn.device_type for _, dyn in sub_stages}
         if len(device_types) > 1:
@@ -2918,18 +3052,6 @@ class FusedStage(BaseDynamics):
         for _, sub_stage in self.sub_stages:
             sub_stage._sync_state_to_batch(remaining_indices, n_new, template_batch)
 
-    def _ensure_bookkeeping_fields(self, batch: Batch) -> None:
-        """Auto-initialize status and registered bookkeeping fields if absent.
-
-        Parameters
-        ----------
-        batch : Batch
-            The batch to check and initialize fields on.
-        """
-        for key, default_fn in self._bookkeeping_keys.items():
-            if getattr(batch, key, None) is None:
-                batch[key] = default_fn(batch.num_graphs, batch.device)
-
     def register_fused_hook(self, hook: Hook) -> None:
         """Register a hook that fires at the FusedStage level on the full batch.
 
@@ -2950,6 +3072,7 @@ class FusedStage(BaseDynamics):
         ValueError
             If ``hook.frequency`` is not a positive integer.
         """
+        self._validate_fused_hook_support(hook)
         if not isinstance(hook.frequency, int) or hook.frequency < 1:
             raise ValueError(
                 f"Hook {hook!r} has frequency={hook.frequency!r}. "
@@ -3267,7 +3390,7 @@ class FusedStage(BaseDynamics):
         if batch is None:
             if self.sampler is None:
                 raise ValueError("No batch provided and no sampler configured.")
-            batch = self.sampler.build_initial_batch()
+            batch = self.sampler.build_initial_batch().to(self.device)
             if self.init_fn is not None:
                 self.init_fn(batch)
             self.active_batch = batch

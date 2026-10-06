@@ -4014,6 +4014,7 @@ aimnet = [
 ]
 ase = [
     { name = "ase" },
+    { name = "spglib" },
 ]
 cu12 = [
     { name = "cuequivariance-ops-torch-cu12", marker = "sys_platform != 'darwin'" },
@@ -4118,6 +4119,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pymatgen", marker = "extra == 'pymatgen'", specifier = ">=2025.10.7" },
     { name = "rich", specifier = ">=13.0.0" },
+    { name = "spglib", marker = "extra == 'ase'", specifier = ">=2.6.0" },
     { name = "tensorboard", marker = "extra == 'tensorboard'" },
     { name = "tensordict", specifier = ">=0.11.0" },
     { name = "torch", specifier = ">=2.8" },
