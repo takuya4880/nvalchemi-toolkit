@@ -1,0 +1,92 @@
+{
+  "status": "PASS (CPU/local preparation only)",
+  "regression": {
+    "passed": 87,
+    "skipped": 33,
+    "skip_reason": "CUDA unavailable on login node",
+    "tests": [
+      "test/dynamics/test_inflight.py",
+      "test/dynamics/test_symmetry_hook.py"
+    ]
+  },
+  "Cartesian_fixture": {
+    "starts": 1280,
+    "CPU_roundtrip": "bitwise PASS",
+    "manifest_ID_order": "PASS",
+    "symmetry_binding": "PASS"
+  },
+  "ASE_stopping_parity": {
+    "cases": 24,
+    "threshold_crossings": 48,
+    "status": "PASS"
+  },
+  "real_optimizer_admission_refill": {
+    "device": "cpu",
+    "capacity": 2,
+    "candidates": 5,
+    "fixed_cell": "PASS",
+    "variable_cell": "PASS"
+  },
+  "Python_syntax": "PASS",
+  "PBS_syntax": "PASS",
+  "nvalchemi_library_changes_vs_PR2": 0,
+  "CI_matches_origin_main": true,
+  "new_GPU_runs": 2,
+  "limitation": "Historical crash not reproduced in new replays; pathological near-overlap remains. A100 not tested.",
+  "GPU_device_gate": "CUDA availability; no H200-only restriction",
+  "A100_validation": "not run",
+  "GPU_smoke": {
+    "job_id": "131023.pbs201",
+    "status": "PASS",
+    "device": "NVIDIA H200",
+    "scope": "8 starts, capacity4, three updates per stage; not convergence validation"
+  },
+  "capacity256_replays": [
+    {
+      "experiment": "Packaged conventional benchmark",
+      "pbs_job_id": "131024.pbs201",
+      "GPU": "NVIDIA H200",
+      "capacity": 256,
+      "starts": 1280,
+      "queue_status": "PASS",
+      "wall_s": 462.8991165868938,
+      "converged": 987,
+      "budget_exhausted": 293,
+      "source_result_sha256": "c9281177c7e5fe8c0e729ca360a4c3230bc4d82d8085355f49b10f8a41e94c1d",
+      "candidate229": {
+        "gene_id": 22,
+        "trial_id": 9,
+        "atoms": 62,
+        "steps": 500,
+        "termination_code": 2,
+        "converged": false,
+        "production_fmax": 1.3437979221343994,
+        "nearest_periodic_image_distance_A": 0.00014448165893559824,
+        "finite_positions_and_cell": true
+      }
+    },
+    {
+      "experiment": "Original-configuration replay",
+      "pbs_job_id": "131041.pbs201",
+      "GPU": "NVIDIA H200",
+      "capacity": 256,
+      "starts": 1280,
+      "queue_status": "PASS",
+      "wall_s": 475.9262628760189,
+      "converged": 984,
+      "budget_exhausted": 296,
+      "source_result_sha256": "2e533ef071b143a2d428860f0dd990971d810ec5fc263eaa2a83eded75bbed8e",
+      "candidate229": {
+        "gene_id": 22,
+        "trial_id": 9,
+        "atoms": 62,
+        "steps": 500,
+        "termination_code": 2,
+        "converged": false,
+        "production_fmax": 19.81061553955078,
+        "nearest_periodic_image_distance_A": 6.9141387939351295e-06,
+        "finite_positions_and_cell": true
+      }
+    }
+  ]
+}

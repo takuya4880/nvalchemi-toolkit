@@ -1,0 +1,249 @@
+{
+  "status": "PASS",
+  "kind": "acceleration",
+  "method": "A",
+  "capacity": 128,
+  "gpu": "NVIDIA H200",
+  "pbs_job_id": "130546.pbs201",
+  "source_commit": "bdd803bfab6178ab7b999b63b1479980121a0a02",
+  "latest_remote_verified": true,
+  "starts_sha256": "f754cf60e485721a331782b606dcb14e1812810c6f7ab8a8f028c6b894877bde",
+  "protocol": {
+    "fmax": 0.02,
+    "cell_stop": "ASE FrechetCellFilter full-cell generalized force, stage reference cell, exp_cell_factor=N",
+    "pressure": 0,
+    "strict_less_than": true,
+    "max_updates_per_stage": 500,
+    "consecutive_checks": 1,
+    "dt": 0.02,
+    "tmax": 0.08,
+    "min_dt": 0.001,
+    "delaystep": 10,
+    "maxstep": 0.05,
+    "implementation": "Conventional FIRE2; fixed/symmetry, cell/symmetry, cell/free, paired strain-rattle/cell/free when fourstage.",
+    "fire_adaptation": {
+      "grow": 1.05,
+      "shrink": 0.75,
+      "initial_alpha": 0.09,
+      "alpha_shrink": 0.985
+    }
+  },
+  "implementation_hashes": {
+    "production_stop.py": "09a7145da040d519d9207aa80d0e17f2a19094ebda4ca88e76cb1027d8e98983",
+    "pilot_engine.py": "7782cabaf128327e90e6746a85693b64fa35f2c124b80c377b0c7241450278fa",
+    "run.py": "c0bc7909d436ef298ae406143851f2c625185aa8db483ab873995c9708e33742"
+  },
+  "runs": {
+    "symmetry_joint": {
+      "status": "PASS",
+      "wall_s": 463.6724576058332,
+      "completed": 1280,
+      "converged": 985,
+      "budget_exhausted": 295,
+      "completed_per_s": 2.760569404120451,
+      "qualified_per_s": 2.124344424264566,
+      "structure_steps": 381439,
+      "method": "A",
+      "constrained": true,
+      "variable_cell": true,
+      "capacity": 128,
+      "max_steps": 500,
+      "peak_allocated_mib": 12228.40185546875,
+      "peak_reserved_mib": 141862.0,
+      "frechet_log_error_max": 2.220446049250313e-14,
+      "cuda_s": {
+        "neighbors": 11.906216326236725,
+        "model_priming": 13.81602230644226,
+        "residual_and_symmetry_hooks": 40.33987698149681,
+        "pre_update": 3.3531237766742708,
+        "model_update": 256.09971570205687,
+        "post_update": 0.03546275196317583,
+        "refill_boundary": 30.037956229891627
+      },
+      "model_calls": 4191,
+      "priming_calls": 918,
+      "model_cuda_s": 269.91573800849915,
+      "mean_counts_host_time_weighted": [
+        102.7798571472813,
+        2742.7067250151144,
+        61636.267732935405,
+        102.7798571472813,
+        2742.7067250151144,
+        61636.267732935405
+      ],
+      "count_columns": [
+        "active_graphs",
+        "active_atoms",
+        "active_edges",
+        "evaluated_graphs",
+        "evaluated_atoms",
+        "evaluated_edges"
+      ],
+      "occupancy_host_time_weighted": 0.8029676339631352,
+      "full_capacity_host_time_fraction": 0.7616107896769605,
+      "priming_is_subset_of_model_cuda": true,
+      "refill_can_overlap_priming": true,
+      "ase_endpoint_audit": {
+        "status": "PASS",
+        "checks": [
+          {
+            "candidate_id": 4400,
+            "ase_fmax": 0.0029972563931310895,
+            "common_fmax": 0.002997256349772215,
+            "error": 4.3358874650401e-11
+          },
+          {
+            "candidate_id": 2000,
+            "ase_fmax": 0.019496172332945316,
+            "common_fmax": 0.019496174529194832,
+            "error": 2.196249515584725e-09
+          },
+          {
+            "candidate_id": 8200,
+            "ase_fmax": 0.4924800526854745,
+            "common_fmax": 0.4924800395965576,
+            "error": 1.3088916894776759e-08
+          },
+          {
+            "candidate_id": 3651,
+            "ase_fmax": 0.1298888709365369,
+            "common_fmax": 0.1298888772726059,
+            "error": 6.3360690027991495e-09
+          },
+          {
+            "candidate_id": 4453,
+            "ase_fmax": 0.014899588191027938,
+            "common_fmax": 0.01489958819001913,
+            "error": 1.0088076207726004e-12
+          },
+          {
+            "candidate_id": 5853,
+            "ase_fmax": 0.015280279759880713,
+            "common_fmax": 0.015280279330909252,
+            "error": 4.2897146078357817e-10
+          },
+          {
+            "candidate_id": 2993,
+            "ase_fmax": 0.25730919232043986,
+            "common_fmax": 0.2573091983795166,
+            "error": 6.059076740339009e-09
+          },
+          {
+            "candidate_id": 2994,
+            "ase_fmax": 0.019223563893916707,
+            "common_fmax": 0.019223563373088837,
+            "error": 5.208278704149638e-10
+          },
+          {
+            "candidate_id": 6354,
+            "ase_fmax": 0.10552289377601885,
+            "common_fmax": 0.10552289336919785,
+            "error": 4.0682100743705263e-10
+          },
+          {
+            "candidate_id": 176,
+            "ase_fmax": 0.0198479946688828,
+            "common_fmax": 0.019847994670271873,
+            "error": 1.3890728844945244e-12
+          },
+          {
+            "candidate_id": 5456,
+            "ase_fmax": 0.019487384382715762,
+            "common_fmax": 0.01948738470673561,
+            "error": 3.240198491460955e-10
+          },
+          {
+            "candidate_id": 7596,
+            "ase_fmax": 0.01919013026006017,
+            "common_fmax": 0.01919013075530529,
+            "error": 4.952451192197227e-10
+          },
+          {
+            "candidate_id": 5878,
+            "ase_fmax": 0.01679035352957814,
+            "common_fmax": 0.016790352761745453,
+            "error": 7.678326863214124e-10
+          },
+          {
+            "candidate_id": 228,
+            "ase_fmax": 0.27515723976337647,
+            "common_fmax": 0.27515724301338196,
+            "error": 3.2500054869544215e-09
+          },
+          {
+            "candidate_id": 6548,
+            "ase_fmax": 0.048425657098188676,
+            "common_fmax": 0.04842566326260567,
+            "error": 6.164416990750432e-09
+          },
+          {
+            "candidate_id": 9659,
+            "ase_fmax": 0.6435534023298985,
+            "common_fmax": 0.6435533761978149,
+            "error": 2.613208360813246e-08
+          }
+        ]
+      }
+    }
+  },
+  "fetched_projection_commit": "c087f7fe36ac006b24d496ec619778fc281847c4",
+  "pyxtal_tree_equivalence": {
+    "old_and_new_tree": "d4b7b16a50ef7db40f56ebe06a31a5d73f91f5ad",
+    "identical": true
+  },
+  "capacity_probe": {
+    "status": "PASS",
+    "wall_s": 2.6875410100910813,
+    "completed": 128,
+    "converged": 0,
+    "budget_exhausted": 128,
+    "completed_per_s": 47.62718020651229,
+    "qualified_per_s": 0.0,
+    "structure_steps": 384,
+    "method": "A",
+    "constrained": true,
+    "variable_cell": true,
+    "capacity": 128,
+    "max_steps": 3,
+    "peak_allocated_mib": 8454.44287109375,
+    "peak_reserved_mib": 8654.0,
+    "frechet_log_error_max": 2.7355895326763857e-13,
+    "cuda_s": {
+      "neighbors": 1.4731013169288636,
+      "model_priming": 0.08064076995849609,
+      "residual_and_symmetry_hooks": 0.06662803268432617,
+      "pre_update": 0.004157952070236206,
+      "model_update": 0.22158528137207031,
+      "post_update": 3.0496000312268732e-05,
+      "refill_boundary": 0.6947562864869833
+    },
+    "model_calls": 4,
+    "priming_calls": 1,
+    "model_cuda_s": 0.3022260513305664,
+    "mean_counts_host_time_weighted": [
+      128.0,
+      2952.0,
+      63385.171150253525,
+      128.0,
+      2952.0,
+      63385.171150253525
+    ],
+    "count_columns": [
+      "active_graphs",
+      "active_atoms",
+      "active_edges",
+      "evaluated_graphs",
+      "evaluated_atoms",
+      "evaluated_edges"
+    ],
+    "occupancy_host_time_weighted": 1.0,
+    "full_capacity_host_time_fraction": 1.0,
+    "priming_is_subset_of_model_cuda": true,
+    "refill_can_overlap_priming": true
+  },
+  "reuse_note": "A branch unchanged. Actual inherited FIRE2 defaults were audited and recorded; only native B adaptation defaults were explicitly matched in follow-up runs.",
+  "reference_export": {
+    "original_json_sha256": "d88679bc9ecda6ebf4c30e09d20fa812025ab32133c31fbdf64675d067ccbb92",
+    "note": "A-only metadata view of archived results; measured run metrics unchanged; not generated by the standalone driver."
+  }
+}

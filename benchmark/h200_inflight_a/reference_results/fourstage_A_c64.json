@@ -1,0 +1,822 @@
+{
+  "status": "PASS",
+  "kind": "fourstage",
+  "method": "A",
+  "capacity": 64,
+  "gpu": "NVIDIA H200",
+  "pbs_job_id": "130546.pbs201",
+  "source_commit": "bdd803bfab6178ab7b999b63b1479980121a0a02",
+  "latest_remote_verified": true,
+  "starts_sha256": "f754cf60e485721a331782b606dcb14e1812810c6f7ab8a8f028c6b894877bde",
+  "protocol": {
+    "fmax": 0.02,
+    "cell_stop": "ASE FrechetCellFilter full-cell generalized force, stage reference cell, exp_cell_factor=N",
+    "pressure": 0,
+    "strict_less_than": true,
+    "max_updates_per_stage": 500,
+    "consecutive_checks": 1,
+    "dt": 0.02,
+    "tmax": 0.08,
+    "min_dt": 0.001,
+    "delaystep": 10,
+    "maxstep": 0.05,
+    "implementation": "Conventional FIRE2; fixed/symmetry, cell/symmetry, cell/free, paired strain-rattle/cell/free when fourstage.",
+    "fire_adaptation": {
+      "grow": 1.05,
+      "shrink": 0.75,
+      "initial_alpha": 0.09,
+      "alpha_shrink": 0.985
+    }
+  },
+  "implementation_hashes": {
+    "production_stop.py": "09a7145da040d519d9207aa80d0e17f2a19094ebda4ca88e76cb1027d8e98983",
+    "pilot_engine.py": "7782cabaf128327e90e6746a85693b64fa35f2c124b80c377b0c7241450278fa",
+    "run.py": "c0bc7909d436ef298ae406143851f2c625185aa8db483ab873995c9708e33742"
+  },
+  "runs": {
+    "stage1": {
+      "status": "PASS",
+      "wall_s": 16.838286464102566,
+      "completed": 160,
+      "converged": 160,
+      "budget_exhausted": 0,
+      "completed_per_s": 9.50215452986282,
+      "qualified_per_s": 9.50215452986282,
+      "structure_steps": 12109,
+      "method": "A",
+      "constrained": true,
+      "variable_cell": false,
+      "capacity": 64,
+      "max_steps": 500,
+      "peak_allocated_mib": 2869.5146484375,
+      "peak_reserved_mib": 4964.0,
+      "frechet_log_error_max": 0.0,
+      "cuda_s": {
+        "neighbors": 2.1264830691814423,
+        "model_priming": 1.1304187831878663,
+        "residual_and_symmetry_hooks": 2.333150845050812,
+        "pre_update": 0.09592995205521583,
+        "model_update": 5.786941950798035,
+        "post_update": 0.0029894079994410277,
+        "refill_boundary": 2.6992838225960734
+      },
+      "model_calls": 329,
+      "priming_calls": 62,
+      "model_cuda_s": 6.917360733985901,
+      "mean_counts_host_time_weighted": [
+        41.96611234025298,
+        567.8260828083721,
+        11864.67100316912,
+        41.96611234025298,
+        567.8260828083721,
+        11864.67100316912
+      ],
+      "count_columns": [
+        "active_graphs",
+        "active_atoms",
+        "active_edges",
+        "evaluated_graphs",
+        "evaluated_atoms",
+        "evaluated_edges"
+      ],
+      "occupancy_host_time_weighted": 0.6557205053164528,
+      "full_capacity_host_time_fraction": 0.5134121547652946,
+      "priming_is_subset_of_model_cuda": true,
+      "refill_can_overlap_priming": true,
+      "transition_host_s": 0.14358988706953824,
+      "ase_endpoint_audit": {
+        "status": "PASS",
+        "checks": [
+          {
+            "candidate_id": 5240,
+            "ase_fmax": 0.0,
+            "common_fmax": 2.4163295651433625e-16,
+            "error": 2.4163295651433625e-16
+          },
+          {
+            "candidate_id": 1274,
+            "ase_fmax": 0.019978100433945656,
+            "common_fmax": 0.01997813582420349,
+            "error": 3.5390257835388184e-08
+          },
+          {
+            "candidate_id": 2944,
+            "ase_fmax": 0.01995527558028698,
+            "common_fmax": 0.01995527558028698,
+            "error": 0.0
+          },
+          {
+            "candidate_id": 4353,
+            "ase_fmax": 0.018821733078364985,
+            "common_fmax": 0.018821733072400093,
+            "error": 5.9648917749566266e-12
+          },
+          {
+            "candidate_id": 5833,
+            "ase_fmax": 0.008879216387867928,
+            "common_fmax": 0.008879215456545353,
+            "error": 9.313225746154785e-10
+          },
+          {
+            "candidate_id": 3636,
+            "ase_fmax": 0.008460590615868568,
+            "common_fmax": 0.008460593409836292,
+            "error": 2.7939677238464355e-09
+          },
+          {
+            "candidate_id": 4354,
+            "ase_fmax": 0.019886895354724383,
+            "common_fmax": 0.019886896014213562,
+            "error": 6.594891785449697e-10
+          },
+          {
+            "candidate_id": 2945,
+            "ase_fmax": 0.008942396380007267,
+            "common_fmax": 0.008942395448684692,
+            "error": 9.313225746154785e-10
+          },
+          {
+            "candidate_id": 3561,
+            "ase_fmax": 0.014318648725748062,
+            "common_fmax": 0.014318647794425488,
+            "error": 9.313225746154785e-10
+          },
+          {
+            "candidate_id": 2277,
+            "ase_fmax": 0.01983401424094135,
+            "common_fmax": 0.019834011793136597,
+            "error": 2.4478047540299475e-09
+          },
+          {
+            "candidate_id": 1808,
+            "ase_fmax": 0.01863330788910389,
+            "common_fmax": 0.01863330602645874,
+            "error": 1.862645149230957e-09
+          },
+          {
+            "candidate_id": 8536,
+            "ase_fmax": 0.01708747396892396,
+            "common_fmax": 0.01708747260272503,
+            "error": 1.3661989317625967e-09
+          },
+          {
+            "candidate_id": 8508,
+            "ase_fmax": 0.015162856245945036,
+            "common_fmax": 0.015162857249379158,
+            "error": 1.0034341222514565e-09
+          },
+          {
+            "candidate_id": 5775,
+            "ase_fmax": 0.017548357495536415,
+            "common_fmax": 0.01754835620522499,
+            "error": 1.2903114236795243e-09
+          },
+          {
+            "candidate_id": 7349,
+            "ase_fmax": 0.01600814051926136,
+            "common_fmax": 0.01600814051926136,
+            "error": 0.0
+          },
+          {
+            "candidate_id": 5188,
+            "ase_fmax": 0.013573178928486014,
+            "common_fmax": 0.013573179952800274,
+            "error": 1.0243142601479294e-09
+          }
+        ]
+      }
+    },
+    "stage2": {
+      "status": "PASS",
+      "wall_s": 41.213520023971796,
+      "completed": 160,
+      "converged": 158,
+      "budget_exhausted": 2,
+      "completed_per_s": 3.882221171764416,
+      "qualified_per_s": 3.8336934071173605,
+      "structure_steps": 32124,
+      "method": "A",
+      "constrained": true,
+      "variable_cell": true,
+      "capacity": 64,
+      "max_steps": 500,
+      "peak_allocated_mib": 3117.64111328125,
+      "peak_reserved_mib": 16090.0,
+      "frechet_log_error_max": 1.3322676295501878e-15,
+      "cuda_s": {
+        "neighbors": 2.418199582219124,
+        "model_priming": 1.368275905609131,
+        "residual_and_symmetry_hooks": 4.708586625099182,
+        "pre_update": 0.8417417603135109,
+        "model_update": 18.52412101840973,
+        "post_update": 0.009543231992982328,
+        "refill_boundary": 2.997063998758793
+      },
+      "model_calls": 948,
+      "priming_calls": 84,
+      "model_cuda_s": 19.89239692401886,
+      "mean_counts_host_time_weighted": [
+        39.48285230320078,
+        559.1462954799075,
+        12457.179883131872,
+        39.48285230320078,
+        559.1462954799075,
+        12457.179883131872
+      ],
+      "count_columns": [
+        "active_graphs",
+        "active_atoms",
+        "active_edges",
+        "evaluated_graphs",
+        "evaluated_atoms",
+        "evaluated_edges"
+      ],
+      "occupancy_host_time_weighted": 0.6169195672375122,
+      "full_capacity_host_time_fraction": 0.4930368199949177,
+      "priming_is_subset_of_model_cuda": true,
+      "refill_can_overlap_priming": true,
+      "transition_host_s": 0.3767544929869473,
+      "ase_endpoint_audit": {
+        "status": "PASS",
+        "checks": [
+          {
+            "candidate_id": 5241,
+            "ase_fmax": 0.01979612215648854,
+            "common_fmax": 0.01979612000286579,
+            "error": 2.1536227488849757e-09
+          },
+          {
+            "candidate_id": 6520,
+            "ase_fmax": 0.013781777008735506,
+            "common_fmax": 0.013781776651740074,
+            "error": 3.56995431480267e-10
+          },
+          {
+            "candidate_id": 7342,
+            "ase_fmax": 0.018903016653013065,
+            "common_fmax": 0.018903018906712532,
+            "error": 2.2536994666311205e-09
+          },
+          {
+            "candidate_id": 2273,
+            "ase_fmax": 0.018618895945562226,
+            "common_fmax": 0.01861889474093914,
+            "error": 1.2046230853102191e-09
+          },
+          {
+            "candidate_id": 2275,
+            "ase_fmax": 0.017689801594898042,
+            "common_fmax": 0.01768980175256729,
+            "error": 1.5766924918447778e-10
+          },
+          {
+            "candidate_id": 6524,
+            "ase_fmax": 0.0199037393844602,
+            "common_fmax": 0.01990373618900776,
+            "error": 3.1954524408461804e-09
+          },
+          {
+            "candidate_id": 5246,
+            "ase_fmax": 0.013563205206962064,
+            "common_fmax": 0.013563207350671291,
+            "error": 2.1437092274922964e-09
+          },
+          {
+            "candidate_id": 5180,
+            "ase_fmax": 0.018746829537574807,
+            "common_fmax": 0.01874682866036892,
+            "error": 8.772058877892785e-10
+          },
+          {
+            "candidate_id": 1806,
+            "ase_fmax": 0.019200305166381524,
+            "common_fmax": 0.01920030452311039,
+            "error": 6.432711342763131e-10
+          },
+          {
+            "candidate_id": 1807,
+            "ase_fmax": 0.002573782738578177,
+            "common_fmax": 0.0025737828109413385,
+            "error": 7.236316146991273e-11
+          },
+          {
+            "candidate_id": 8507,
+            "ase_fmax": 0.019323698571946185,
+            "common_fmax": 0.019323697313666344,
+            "error": 1.2582798414317864e-09
+          },
+          {
+            "candidate_id": 4355,
+            "ase_fmax": 0.019275960665581956,
+            "common_fmax": 0.019275957718491554,
+            "error": 2.947090401578256e-09
+          },
+          {
+            "candidate_id": 6004,
+            "ase_fmax": 0.017680993070983198,
+            "common_fmax": 0.017680993303656578,
+            "error": 2.3267338056243148e-10
+          },
+          {
+            "candidate_id": 5836,
+            "ase_fmax": 0.010758183182894671,
+            "common_fmax": 0.01075818296521902,
+            "error": 2.1767565007435596e-10
+          },
+          {
+            "candidate_id": 5188,
+            "ase_fmax": 0.01866681348362811,
+            "common_fmax": 0.018666816875338554,
+            "error": 3.3917104437508616e-09
+          },
+          {
+            "candidate_id": 6009,
+            "ase_fmax": 0.08601952356395098,
+            "common_fmax": 0.08601951599121094,
+            "error": 7.57274004614672e-09
+          }
+        ]
+      }
+    },
+    "stage3": {
+      "status": "PASS",
+      "wall_s": 4.229501644149423,
+      "completed": 160,
+      "converged": 160,
+      "budget_exhausted": 0,
+      "completed_per_s": 37.82951597177519,
+      "qualified_per_s": 37.82951597177519,
+      "structure_steps": 498,
+      "method": "A",
+      "constrained": false,
+      "variable_cell": true,
+      "capacity": 64,
+      "max_steps": 500,
+      "peak_allocated_mib": 2666.97998046875,
+      "peak_reserved_mib": 4756.0,
+      "frechet_log_error_max": 4.440892098500626e-16,
+      "cuda_s": {
+        "neighbors": 0.28557104063034056,
+        "model_priming": 0.08048358535766602,
+        "residual_and_symmetry_hooks": 0.40301782417297366,
+        "pre_update": 0.1612612804174423,
+        "model_update": 2.767821153640747,
+        "post_update": 0.0018256000010296702,
+        "refill_boundary": 0.34005717872455715
+      },
+      "model_calls": 174,
+      "priming_calls": 3,
+      "model_cuda_s": 2.848304738998413,
+      "mean_counts_host_time_weighted": [
+        7.754629434438347,
+        107.99890444146092,
+        2501.122482831802,
+        7.754629434438347,
+        107.99890444146092,
+        2501.122482831802
+      ],
+      "count_columns": [
+        "active_graphs",
+        "active_atoms",
+        "active_edges",
+        "evaluated_graphs",
+        "evaluated_atoms",
+        "evaluated_edges"
+      ],
+      "occupancy_host_time_weighted": 0.12116608491309917,
+      "full_capacity_host_time_fraction": 0.08103312268277481,
+      "priming_is_subset_of_model_cuda": true,
+      "refill_can_overlap_priming": true,
+      "transition_host_s": 0.14540780312381685,
+      "ase_endpoint_audit": {
+        "status": "PASS",
+        "checks": [
+          {
+            "candidate_id": 1270,
+            "ase_fmax": 0.005954063801714578,
+            "common_fmax": 0.005954063963145018,
+            "error": 1.6143043932853596e-10
+          },
+          {
+            "candidate_id": 6000,
+            "ase_fmax": 0.013601005436630861,
+            "common_fmax": 0.01360100507736206,
+            "error": 3.5926880047332244e-10
+          },
+          {
+            "candidate_id": 3631,
+            "ase_fmax": 0.01909676019374976,
+            "common_fmax": 0.01909676007926464,
+            "error": 1.1448511930134408e-10
+          },
+          {
+            "candidate_id": 1272,
+            "ase_fmax": 0.0042972176051991095,
+            "common_fmax": 0.004297217819839716,
+            "error": 2.146406065037243e-10
+          },
+          {
+            "candidate_id": 5832,
+            "ase_fmax": 0.01232461757900445,
+            "common_fmax": 0.012324617244303226,
+            "error": 3.3470122333401076e-10
+          },
+          {
+            "candidate_id": 3633,
+            "ase_fmax": 0.01880311017303952,
+            "common_fmax": 0.018803110346198082,
+            "error": 1.7315856040700517e-10
+          },
+          {
+            "candidate_id": 1274,
+            "ase_fmax": 0.01306107641905326,
+            "common_fmax": 0.013061076402664185,
+            "error": 1.6389075860323565e-11
+          },
+          {
+            "candidate_id": 6004,
+            "ase_fmax": 0.01767141705420887,
+            "common_fmax": 0.01767141744494438,
+            "error": 3.9073551338919543e-10
+          },
+          {
+            "candidate_id": 4355,
+            "ase_fmax": 0.01870885614976741,
+            "common_fmax": 0.018708856776356697,
+            "error": 6.265892874002255e-10
+          },
+          {
+            "candidate_id": 1276,
+            "ase_fmax": 0.01657012279833909,
+            "common_fmax": 0.01657012291252613,
+            "error": 1.1418704176646699e-10
+          },
+          {
+            "candidate_id": 6006,
+            "ase_fmax": 0.0192243110962358,
+            "common_fmax": 0.01922431029379368,
+            "error": 8.024421231656031e-10
+          },
+          {
+            "candidate_id": 5247,
+            "ase_fmax": 0.015482150597811366,
+            "common_fmax": 0.015482150949537754,
+            "error": 3.517263875985055e-10
+          },
+          {
+            "candidate_id": 2278,
+            "ase_fmax": 0.016586817616568137,
+            "common_fmax": 0.016586817800998688,
+            "error": 1.8443055069261582e-10
+          },
+          {
+            "candidate_id": 8508,
+            "ase_fmax": 0.0178123798191098,
+            "common_fmax": 0.01781238056719303,
+            "error": 7.480832307782403e-10
+          },
+          {
+            "candidate_id": 5779,
+            "ase_fmax": 0.01940775611058519,
+            "common_fmax": 0.019407756626605988,
+            "error": 5.160207990073662e-10
+          },
+          {
+            "candidate_id": 3637,
+            "ase_fmax": 0.01988687726107066,
+            "common_fmax": 0.01988687738776207,
+            "error": 1.2669141083443414e-10
+          }
+        ]
+      }
+    },
+    "stage4": {
+      "status": "PASS",
+      "wall_s": 30.463240126147866,
+      "completed": 160,
+      "converged": 136,
+      "budget_exhausted": 24,
+      "completed_per_s": 5.252231848530956,
+      "qualified_per_s": 4.464397071251312,
+      "structure_steps": 37742,
+      "method": "A",
+      "constrained": false,
+      "variable_cell": true,
+      "capacity": 64,
+      "max_steps": 500,
+      "peak_allocated_mib": 3509.60400390625,
+      "peak_reserved_mib": 33300.0,
+      "frechet_log_error_max": 6.217248937900877e-15,
+      "cuda_s": {
+        "neighbors": 3.1534357563257216,
+        "model_priming": 1.309907744407654,
+        "residual_and_symmetry_hooks": 2.0712052757740023,
+        "pre_update": 0.8755464963316918,
+        "model_update": 21.16372972393036,
+        "post_update": 0.009624351998791098,
+        "refill_boundary": 2.719512322619557
+      },
+      "model_calls": 980,
+      "priming_calls": 86,
+      "model_cuda_s": 22.473637468338012,
+      "mean_counts_host_time_weighted": [
+        45.683632049159364,
+        739.8083744805826,
+        17032.809130096335,
+        45.683632049159364,
+        739.8083744805826,
+        17032.809130096335
+      ],
+      "count_columns": [
+        "active_graphs",
+        "active_atoms",
+        "active_edges",
+        "evaluated_graphs",
+        "evaluated_atoms",
+        "evaluated_edges"
+      ],
+      "occupancy_host_time_weighted": 0.7138067507681151,
+      "full_capacity_host_time_fraction": 0.5929238805908552,
+      "priming_is_subset_of_model_cuda": true,
+      "refill_can_overlap_priming": true,
+      "transition_host_s": 0.18664281303063035,
+      "ase_endpoint_audit": {
+        "status": "PASS",
+        "checks": [
+          {
+            "candidate_id": 2941,
+            "ase_fmax": 0.017979794353230886,
+            "common_fmax": 0.01797979511320591,
+            "error": 7.599750238840297e-10
+          },
+          {
+            "candidate_id": 2272,
+            "ase_fmax": 0.018878776520877542,
+            "common_fmax": 0.01887877658009529,
+            "error": 5.921774876016528e-11
+          },
+          {
+            "candidate_id": 1802,
+            "ase_fmax": 0.01984192725456592,
+            "common_fmax": 0.019841928035020828,
+            "error": 7.804549090328905e-10
+          },
+          {
+            "candidate_id": 2944,
+            "ase_fmax": 0.019687847399407647,
+            "common_fmax": 0.019687848165631294,
+            "error": 7.662236470307171e-10
+          },
+          {
+            "candidate_id": 4354,
+            "ase_fmax": 0.019948855557553023,
+            "common_fmax": 0.01994885504245758,
+            "error": 5.150954419941289e-10
+          },
+          {
+            "candidate_id": 6005,
+            "ase_fmax": 0.019079613228572243,
+            "common_fmax": 0.01907961256802082,
+            "error": 6.605514225876963e-10
+          },
+          {
+            "candidate_id": 6520,
+            "ase_fmax": 0.019769725990474635,
+            "common_fmax": 0.01976972632110119,
+            "error": 3.30626553912694e-10
+          },
+          {
+            "candidate_id": 3634,
+            "ase_fmax": 0.019714503443387373,
+            "common_fmax": 0.01971450261771679,
+            "error": 8.256705839870815e-10
+          },
+          {
+            "candidate_id": 3637,
+            "ase_fmax": 0.019401105135251843,
+            "common_fmax": 0.019401105120778084,
+            "error": 1.4473758996880193e-11
+          },
+          {
+            "candidate_id": 3561,
+            "ase_fmax": 0.01981810595702003,
+            "common_fmax": 0.019818106666207314,
+            "error": 7.091872818165701e-10
+          },
+          {
+            "candidate_id": 1270,
+            "ase_fmax": 0.47894511485808644,
+            "common_fmax": 0.4789451062679291,
+            "error": 8.590157363208561e-09
+          },
+          {
+            "candidate_id": 6008,
+            "ase_fmax": 0.019752968711234085,
+            "common_fmax": 0.019752968102693558,
+            "error": 6.085405269973254e-10
+          },
+          {
+            "candidate_id": 1805,
+            "ase_fmax": 0.019556340993914508,
+            "common_fmax": 0.01955634169280529,
+            "error": 6.988907820526524e-10
+          },
+          {
+            "candidate_id": 5834,
+            "ase_fmax": 0.043453049685376915,
+            "common_fmax": 0.043453048914670944,
+            "error": 7.70705971264718e-10
+          },
+          {
+            "candidate_id": 5186,
+            "ase_fmax": 0.019455558587422008,
+            "common_fmax": 0.0194555576890707,
+            "error": 8.983513065385917e-10
+          },
+          {
+            "candidate_id": 2279,
+            "ase_fmax": 0.3169987566729681,
+            "common_fmax": 0.31699874997138977,
+            "error": 6.701578347811932e-09
+          }
+        ]
+      }
+    }
+  },
+  "fetched_projection_commit": "c087f7fe36ac006b24d496ec619778fc281847c4",
+  "pyxtal_tree_equivalence": {
+    "old_and_new_tree": "d4b7b16a50ef7db40f56ebe06a31a5d73f91f5ad",
+    "identical": true
+  },
+  "stage1_to_stage2_roundtrip_max_A": 1.6689300537109375e-05,
+  "rattle_seeds": {
+    "1270": 2026102070,
+    "1800": 2026102600,
+    "2270": 2026103070,
+    "2940": 2026103740,
+    "3560": 2026104360,
+    "3630": 2026104430,
+    "4350": 2026105150,
+    "5180": 2026105980,
+    "5240": 2026106040,
+    "5770": 2026106570,
+    "5830": 2026106630,
+    "6000": 2026106800,
+    "6520": 2026107320,
+    "7340": 2026108140,
+    "8500": 2026109300,
+    "8530": 2026109330,
+    "1271": 2026102071,
+    "1801": 2026102601,
+    "2271": 2026103071,
+    "2941": 2026103741,
+    "3561": 2026104361,
+    "3631": 2026104431,
+    "4351": 2026105151,
+    "5181": 2026105981,
+    "5241": 2026106041,
+    "5771": 2026106571,
+    "5831": 2026106631,
+    "6001": 2026106801,
+    "6521": 2026107321,
+    "7341": 2026108141,
+    "8501": 2026109301,
+    "8531": 2026109331,
+    "1272": 2026102072,
+    "1802": 2026102602,
+    "2272": 2026103072,
+    "2942": 2026103742,
+    "3562": 2026104362,
+    "3632": 2026104432,
+    "4352": 2026105152,
+    "5182": 2026105982,
+    "5242": 2026106042,
+    "5772": 2026106572,
+    "5832": 2026106632,
+    "6002": 2026106802,
+    "6522": 2026107322,
+    "7342": 2026108142,
+    "8502": 2026109302,
+    "8532": 2026109332,
+    "1273": 2026102073,
+    "1803": 2026102603,
+    "2273": 2026103073,
+    "2943": 2026103743,
+    "3563": 2026104363,
+    "3633": 2026104433,
+    "4353": 2026105153,
+    "5183": 2026105983,
+    "5243": 2026106043,
+    "5773": 2026106573,
+    "5833": 2026106633,
+    "6003": 2026106803,
+    "6523": 2026107323,
+    "7343": 2026108143,
+    "8503": 2026109303,
+    "8533": 2026109333,
+    "1274": 2026102074,
+    "1804": 2026102604,
+    "2274": 2026103074,
+    "2944": 2026103744,
+    "3564": 2026104364,
+    "3634": 2026104434,
+    "4354": 2026105154,
+    "5184": 2026105984,
+    "5244": 2026106044,
+    "5774": 2026106574,
+    "5834": 2026106634,
+    "6004": 2026106804,
+    "6524": 2026107324,
+    "7344": 2026108144,
+    "8504": 2026109304,
+    "8534": 2026109334,
+    "1275": 2026102075,
+    "1805": 2026102605,
+    "2275": 2026103075,
+    "2945": 2026103745,
+    "3565": 2026104365,
+    "3635": 2026104435,
+    "4355": 2026105155,
+    "5185": 2026105985,
+    "5245": 2026106045,
+    "5775": 2026106575,
+    "5835": 2026106635,
+    "6005": 2026106805,
+    "6525": 2026107325,
+    "7345": 2026108145,
+    "8505": 2026109305,
+    "8535": 2026109335,
+    "1276": 2026102076,
+    "1806": 2026102606,
+    "2276": 2026103076,
+    "2946": 2026103746,
+    "3566": 2026104366,
+    "3636": 2026104436,
+    "4356": 2026105156,
+    "5186": 2026105986,
+    "5246": 2026106046,
+    "5776": 2026106576,
+    "5836": 2026106636,
+    "6006": 2026106806,
+    "6526": 2026107326,
+    "7346": 2026108146,
+    "8506": 2026109306,
+    "8536": 2026109336,
+    "1277": 2026102077,
+    "1807": 2026102607,
+    "2277": 2026103077,
+    "2947": 2026103747,
+    "3567": 2026104367,
+    "3637": 2026104437,
+    "4357": 2026105157,
+    "5187": 2026105987,
+    "5247": 2026106047,
+    "5777": 2026106577,
+    "5837": 2026106637,
+    "6007": 2026106807,
+    "6527": 2026107327,
+    "7347": 2026108147,
+    "8507": 2026109307,
+    "8537": 2026109337,
+    "1278": 2026102078,
+    "1808": 2026102608,
+    "2278": 2026103078,
+    "2948": 2026103748,
+    "3568": 2026104368,
+    "3638": 2026104438,
+    "4358": 2026105158,
+    "5188": 2026105988,
+    "5248": 2026106048,
+    "5778": 2026106578,
+    "5838": 2026106638,
+    "6008": 2026106808,
+    "6528": 2026107328,
+    "7348": 2026108148,
+    "8508": 2026109308,
+    "8538": 2026109338,
+    "1279": 2026102079,
+    "1809": 2026102609,
+    "2279": 2026103079,
+    "2949": 2026103749,
+    "3569": 2026104369,
+    "3639": 2026104439,
+    "4359": 2026105159,
+    "5189": 2026105989,
+    "5249": 2026106049,
+    "5779": 2026106579,
+    "5839": 2026106639,
+    "6009": 2026106809,
+    "6529": 2026107329,
+    "7349": 2026108149,
+    "8509": 2026109309,
+    "8539": 2026109339
+  },
+  "accepted_stage4": 76,
+  "fourstage_wall_s": 93.59694325458258,
+  "starts": 160,
+  "reuse_note": "A branch unchanged. Actual inherited FIRE2 defaults were audited and recorded; only native B adaptation defaults were explicitly matched in follow-up runs.",
+  "reference_export": {
+    "original_json_sha256": "db089022cf19503be5c079c09e10130d57b165fa5ffb0a0e12cd0b96fe45d127",
+    "note": "A-only metadata view of archived results; measured run metrics unchanged; not generated by the standalone driver."
+  }
+}

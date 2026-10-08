@@ -1,0 +1,53 @@
+{
+  "pr2_base": "e479d16855521d35c1fe511bfb2bfe049b312e1b",
+  "original_starts_sha256": "f754cf60e485721a331782b606dcb14e1812810c6f7ab8a8f028c6b894877bde",
+  "cartesian_starts_sha256": "85171cecac6224824ce564b554f996b13cb5c01034c173dea760b89db4e2208e",
+  "source_commit": "bdd803bfab6178ab7b999b63b1479980121a0a02",
+  "copied_unchanged_files": {
+    "production_stop.py": "1c3ce238fe4000e61b493d10cf2547ee6163b8e9d337bd749bc76d3beb0f1fa4",
+    "verify_stop.py": "330604b0305bd82ca58bc808d9d12f8de9a467974e3384032714e349f035eaf7",
+    "telemetry.py": "72107abe85922fef730ece7386cf11316b50ca62b64ca78415d8c1556f76112e",
+    "neighbors.py": "b49bc2ca45fda565bbb43b12333c69c442855811ca0df4bcd3dffaab387fcc0f"
+  },
+  "new_GPU_runs": 2,
+  "standalone_changes": [
+    "Cartesian CPU float32 fixture instead of runtime chart expansion",
+    "No cross-method warmup: conventional-only warmup",
+    "No reduced-chart rebase between stages",
+    "A-only CLI and output directory",
+    "Benchmark-local neighbor hook and identical TensorNet wrapper",
+    "GPU availability gate accepts CUDA devices rather than requiring H200 by name"
+  ],
+  "library_unchanged_vs_PR2": true,
+  "ci_workflow_matches_public_main": "f8fe70d1bb9b3a9a4221905fd0ad973523637ca0",
+  "delivery_file_sha256": {
+    ".gitignore": "87af13c6f225079c9a4e3fea1e7847a40065d8b9117e1b19c949a5174fd365dd",
+    "PR_DESCRIPTION.md": "e373bf78c71107c4e83094be241ad0b33d8195f6d8d6fac0198725db5574ffdc",
+    "PUBLISH.md": "3f39d43323a4bf45ffb631b67263563a07be1a0668cd3037d28a1ec99b9adaaf",
+    "README.md": "9ceddd9f5b05eb8d90899bc768c29935d3d8e22d29c5b24243f467d052bb89ac",
+    "VALIDATION.json": "1e8e42ed01bac5ab349ef8c3f7464b17dc6ce4ed6d0bce170f1a8b9e9359fdf9",
+    "dataset_metadata.json": "405bf0e084c446babf3aa0bd31ab5e0cf569e138e0ca2a99511130653e33270b",
+    "fields.py": "426ad037a87a8e6457bd6e5a89d98a66b089cb56cd561f4908409d81c955635d",
+    "initial_cifs.tar.gz": "19a1de4c249d857c02f56cc92cb8dc4d1c8d9dacea9af9ea0af2e3f6a4bf255f",
+    "manifest.csv": "04c930f18aa345b47b4441fd710f55db0703082a2817f430e1e569f6bd74bd2f",
+    "model.py": "adc27a20512348103663b8d11d47affe297673b966584f72822ba9f261326ae9",
+    "neighbors.py": "b49bc2ca45fda565bbb43b12333c69c442855811ca0df4bcd3dffaab387fcc0f",
+    "production_stop.py": "1c3ce238fe4000e61b493d10cf2547ee6163b8e9d337bd749bc76d3beb0f1fa4",
+    "reference_results/REPORT.md": "ea0dc945babff19023eb2dcd2d8896699c2a1b3f81b06a5798ab9c29ede9c139",
+    "reference_results/a256_case229_analysis.json": "049a95f1d0227a83992de5aeb3187b9617524c80fb53d9f28bcedb46bbfd61d1",
+    "reference_results/a256_failure_state.pt.gz": "1fd79f4b4e57293f7ae26bc77618d86f89c8d2abff8799aaad0e34008ddacb01",
+    "reference_results/acceleration_A_c128.json": "02600ba945c08316cd7a43cbe575811acc77fd736c257637bb50d9a7d918fb50",
+    "reference_results/acceleration_A_c256.json": "1a91a535dd3563cd56d64a114f06ad3f5fbdaba7182f27b2d57448844908233d",
+    "reference_results/acceleration_A_c64.json": "4db07a009bfa349c49e2de34ce27800231e090fe898902f4278aafca5f9d4d61",
+    "reference_results/c256_replays.json": "a1a402835b65400f7c10b02258931d234e0cee50a40a95874b05edc684befa43",
+    "reference_results/fourstage_A_c64.json": "c0f9f29ee93a95771f301cf26ea381a669b30d4766b0ec6b572485a74b146275",
+    "run.py": "01be891b1f69c9431743e9971ef639b4e00c99e4c0bfdd1dd368849e9214de7f",
+    "run_one.pbs": "202cb1c86d2b4765bceb9061510553751e1b33d0960304f33708075aa56c63a6",
+    "runtime.py": "f27dfa867f3487cef7b454125fa753f760f636f8b3fcd266fcbc0927aabdac6b",
+    "starts_cartesian.pt.gz": "ab096c5607d41568efdb93919529ce46e0bcbc55c477fd3b48691e42b8675b6f",
+    "telemetry.py": "72107abe85922fef730ece7386cf11316b50ca62b64ca78415d8c1556f76112e",
+    "verify_stop.py": "330604b0305bd82ca58bc808d9d12f8de9a467974e3384032714e349f035eaf7"
+  },
+  "new_GPU_smoke_runs": 1,
+  "GPU_result_note": "Packaged execution and original-configuration replay measurements are distinct; see reference_results/c256_replays.json."
+}

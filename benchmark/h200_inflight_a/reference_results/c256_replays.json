@@ -1,0 +1,51 @@
+{
+  "replays": [
+    {
+      "experiment": "Packaged conventional benchmark",
+      "pbs_job_id": "131024.pbs201",
+      "GPU": "NVIDIA H200",
+      "capacity": 256,
+      "starts": 1280,
+      "queue_status": "PASS",
+      "wall_s": 462.8991165868938,
+      "converged": 987,
+      "budget_exhausted": 293,
+      "source_result_sha256": "c9281177c7e5fe8c0e729ca360a4c3230bc4d82d8085355f49b10f8a41e94c1d",
+      "candidate229": {
+        "gene_id": 22,
+        "trial_id": 9,
+        "atoms": 62,
+        "steps": 500,
+        "termination_code": 2,
+        "converged": false,
+        "production_fmax": 1.3437979221343994,
+        "nearest_periodic_image_distance_A": 0.00014448165893559824,
+        "finite_positions_and_cell": true
+      }
+    },
+    {
+      "experiment": "Original-configuration replay",
+      "pbs_job_id": "131041.pbs201",
+      "GPU": "NVIDIA H200",
+      "capacity": 256,
+      "starts": 1280,
+      "queue_status": "PASS",
+      "wall_s": 475.9262628760189,
+      "converged": 984,
+      "budget_exhausted": 296,
+      "source_result_sha256": "2e533ef071b143a2d428860f0dd990971d810ec5fc263eaa2a83eded75bbed8e",
+      "candidate229": {
+        "gene_id": 22,
+        "trial_id": 9,
+        "atoms": 62,
+        "steps": 500,
+        "termination_code": 2,
+        "converged": false,
+        "production_fmax": 19.81061553955078,
+        "nearest_periodic_image_distance_A": 6.9141387939351295e-06,
+        "finite_positions_and_cell": true
+      }
+    }
+  ],
+  "interpretation": "Historical exact-overlap crash not reproduced; severe near-overlap and failure to converge persist. Sensitivity to numerical differences is a plausible explanation, not an established first cause."
+}

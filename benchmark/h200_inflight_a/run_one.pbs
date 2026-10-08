@@ -1,0 +1,15 @@
+#!/bin/bash
+#PBS -N h200-inflight-a
+#PBS -q normal
+#PBS -P 52001011
+#PBS -l select=1:ncpus=2:ngpus=1:mem=24gb
+#PBS -l walltime=00:30:00
+#PBS -j oe
+set -euo pipefail
+cd "${TASK_SOURCE:?Set TASK_SOURCE to the source checkout}/benchmark/h200_inflight_a"
+export OMP_NUM_THREADS=2 PYTHONDONTWRITEBYTECODE=1
+export WARP_CACHE_PATH=/tmp/h200-a-warp-${PBS_JOBID}
+export TORCHINDUCTOR_CACHE_DIR=/tmp/h200-a-inductor-${PBS_JOBID}
+: "${OUTPUT_DIR:?Set OUTPUT_DIR to a new result directory}"
+mkdir -p "$(dirname "$OUTPUT_DIR")"
+"${TASK_PY:?Set TASK_PY to the configured Python executable}" run.py --kind "${KIND:-acceleration}" --capacity "${CAPACITY:-64}" --output-dir "$OUTPUT_DIR" > "${OUTPUT_DIR}.log" 2>&1

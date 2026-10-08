@@ -1,0 +1,27 @@
+{
+  "candidate_id": 229,
+  "gene": 22,
+  "trial": 9,
+  "atoms": 62,
+  "snapshot_min_distance_A": 0.0,
+  "snapshot_steps": 446,
+  "snapshot_production_fmax": null,
+  "endpoints": {
+    "A_c64": {
+      "termination": 2,
+      "updates": 500,
+      "energy_ev_atom": -4.332395492061492,
+      "production_fmax": 0.41438964009284973,
+      "min_distance_A": 0.0004553794860839844
+    },
+    "A_c128": {
+      "termination": 2,
+      "updates": 500,
+      "energy_ev_atom": -4.3318880142704135,
+      "production_fmax": 1.2455397844314575,
+      "min_distance_A": 0.00014448165893554688
+    }
+  },
+  "original_initial_min_distance_A": 0.4756480371989029,
+  "original_initial_volume_A3": 638.993535667751
+}

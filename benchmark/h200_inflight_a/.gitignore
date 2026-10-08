@@ -1,0 +1,6 @@
+!initial_cifs.tar.gz
+!manifest.csv
+/runs/
+/ase_parity_*.json
+*.log
+__pycache__/
