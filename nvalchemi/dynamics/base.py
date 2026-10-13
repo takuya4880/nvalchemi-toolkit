@@ -187,6 +187,7 @@ class InflightTerminationReason(IntEnum):
     ACTIVE = 0
     CONVERGED = 1
     MAX_STEPS = 2
+    FAILED = 3
 
 
 class _ConvergenceCriterion(BaseModel):

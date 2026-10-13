@@ -4,6 +4,9 @@
 
 ### Added
 
+- Optional standalone inflight failure isolation and a user-structure recipe
+  composing caller-selected models, stopping rules and symmetry constraints.
+
 - Batched `FixSymmetryHook` for ASE/spglib-derived space-group constraints in
   standalone FIRE and FIRE2 fixed- or variable-cell geometry relaxation.
 - Sampler-driven inflight execution for standalone optimizers, including
