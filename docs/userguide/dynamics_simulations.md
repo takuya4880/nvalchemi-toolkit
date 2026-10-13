@@ -61,6 +61,57 @@ The cell degrees of freedom are propagated using an NPH-like scheme at zero targ
 pressure. The model must return tensile-positive `stress` in addition
 to `forces`.
 
+### Symmetry-constrained optimization
+
+Install the `ase` extra and prepare each structure with
+{py:func}`~nvalchemi.dynamics.hooks.prepare_symmetry` before batching it. This
+refines the structure with ASE/spglib and returns reusable symmetry metadata.
+The runtime {py:class}`~nvalchemi.dynamics.hooks.FixSymmetryHook` selects those
+records by each graph's stable `symmetry_id`, then projects position and cell
+steps, forces, stress, and optimizer velocities on the batch device:
+
+```python
+from nvalchemi.data import Batch
+from nvalchemi.dynamics import ConvergenceHook
+from nvalchemi.dynamics.hooks import FixSymmetryHook, prepare_symmetry
+from nvalchemi.dynamics.optimizers.fire import FIREVariableCell
+
+prepared = [
+    prepare_symmetry(data, symmetry_id=i, symprec=0.01)
+    for i, data in enumerate(batch.to_data_list())
+]
+batch = Batch.from_data_list([data for data, _ in prepared], device=batch.device)
+symmetry = FixSymmetryHook(records=[record for _, record in prepared])
+
+with FIREVariableCell(
+    model=model,
+    dt=0.1,
+    n_steps=500,
+    hooks=[symmetry],
+    convergence_hook=ConvergenceHook.from_fmax(0.05),
+) as opt:
+    relaxed = opt.run(batch)
+```
+
+The same hook works with `FIRE`, `FIRE2`, and `FIRE2VariableCell`. It requires
+`frequency=1`. A standalone optimizer may replace or reorder complete graphs at
+step boundaries; the hook rebinds the prepared records on the next step and
+invalidates layout-dependent projection caches. `FusedStage` is unsupported
+because its sub-stage lifecycle has no `AFTER_PRE_UPDATE` point at which to
+constrain the coordinate step. The hook uses Python graph loops and dynamic
+safety checks, so it is not compatible with
+`torch.compile(fullgraph=True)` and is intended for correctness-oriented
+relaxation batches rather than compiled hot paths.
+
+For a campaign with structures that converge at different rates, configure the
+standalone optimizer itself with a `SizeAwareSampler`, result `sinks`, and an
+`init_fn`, then call `run(batch=None)`. Completed graphs are written to the
+sinks and replacements are admitted at `refill_frequency` step boundaries.
+`max_steps_per_system` provides an independent limit for each structure;
+`n_steps` remains the global safety limit for the whole campaign. See
+`examples/intermediate/09_inflight_symmetry_relaxation.py` for a complete
+TensorNet/FIRE2VariableCell comparison against static batches.
+
 ### Choosing between fixed and variable cell
 
 Use fixed-cell FIRE when the cell is known (e.g. a bulk crystal at experimental

@@ -316,12 +316,12 @@ stage1_inflight = NVTLangevin(
 )
 
 
-# ``init_fn`` is called when the initial batch is built; useful for logging
+# ``init_fn`` runs for initial and replacement batches; useful for logging
 # or mutation before the first dynamics step.
 def _inflight_init(batch: Batch) -> None:
     if getattr(batch, "system_id", None) is not None:
         ids = batch.system_id.squeeze(-1).tolist()
-        logging.info("init_fn: initial batch system_ids = %s", ids)
+        logging.info("init_fn: admitted batch system_ids = %s", ids)
 
 
 fused_inflight = FusedStage(

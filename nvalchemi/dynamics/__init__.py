@@ -25,6 +25,7 @@ from nvalchemi.dynamics.base import (
     DynamicsStage,
     FusedStage,
     Hook,
+    InflightTerminationReason,
 )
 from nvalchemi.dynamics.demo import DemoDynamics
 from nvalchemi.dynamics.integrators import NPH, NPT, NVE, NVTLangevin, NVTNoseHoover
@@ -52,6 +53,7 @@ __all__ = [
     "GPUBuffer",
     "Hook",
     "HostMemory",
+    "InflightTerminationReason",
     "NPH",
     "NPT",
     "NVE",

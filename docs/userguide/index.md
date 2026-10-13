@@ -54,6 +54,8 @@ For install options, refer to the install guide below.
 
 ## Advanced Usage
 
+- [Inflight Relaxation and Failure Isolation](inflight_failure_isolation)
+
 - [Distributed Training](distributed_training)
 - [Zarr Compression Tuning](zarr_compression)
 - {doc}`Agent Skills <agent_skills>`
@@ -102,6 +104,7 @@ distributed_design
 :maxdepth: 1
 :hidden:
 
+inflight_failure_isolation
 distributed_training
 zarr_compression
 agent_skills

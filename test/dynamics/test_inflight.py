@@ -31,6 +31,7 @@ from nvalchemi.dynamics.base import (
     BaseDynamics,
     ConvergenceHook,
     FusedStage,
+    InflightTerminationReason,
 )
 from nvalchemi.dynamics.sampler import SizeAwareSampler
 from nvalchemi.dynamics.sinks import HostMemory
@@ -477,6 +478,110 @@ class TestFusedStageInflight:
 # -----------------------------------------------------------------------------
 # TestRefillCheck
 # -----------------------------------------------------------------------------
+
+
+class TestStandaloneInflight:
+    """End-to-end tests for sampler-driven standalone dynamics."""
+
+    def setup_method(self) -> None:
+        """Set up a deterministic demonstration model."""
+        self.model = DemoModelWrapper(DemoModel())
+
+    def test_run_builds_refills_and_exhausts_sampler(self) -> None:
+        """Standalone run should graduate every input exactly once."""
+        dataset = MockDataset([(2, 0)] * 5)
+        sampler = SizeAwareSampler(dataset, max_atoms=6, max_edges=10, max_batch_size=3)
+        sink = HostMemory(capacity=10)
+        dynamics = BaseDynamics(
+            model=self.model,
+            sampler=sampler,
+            sinks=[sink],
+            refill_frequency=1,
+            n_steps=10,
+            convergence_hook=ConvergenceHook.from_fmax(1e6),
+            init_fn=initialize_batch_for_dynamics,
+            device_type="cpu",
+        )
+
+        result = dynamics.run()
+
+        assert result is None
+        assert dynamics.active_batch is None
+        assert dynamics.done is True
+        assert sampler.exhausted is True
+        assert len(sink) == len(dataset)
+        completed = sink.read()
+        assert sorted(completed.system_id.view(-1).tolist()) == list(
+            range(len(dataset))
+        )
+
+    def test_run_returns_active_batch_at_step_limit(self) -> None:
+        """The global step limit should return unfinished active systems."""
+        dataset = MockDataset([(2, 0)] * 5)
+        sampler = SizeAwareSampler(dataset, max_atoms=4, max_batch_size=2)
+        dynamics = BaseDynamics(
+            model=self.model,
+            sampler=sampler,
+            n_steps=2,
+            convergence_hook=ConvergenceHook.from_fmax(0.0),
+            init_fn=initialize_batch_for_dynamics,
+            device_type="cpu",
+        )
+
+        result = dynamics.run()
+
+        assert result is not None
+        assert result is dynamics.active_batch
+        assert result.num_graphs == 2
+        assert result.status.view(-1).tolist() == [0, 0]
+        assert dynamics.step_count == 2
+        assert sampler.exhausted is False
+
+    def test_run_requires_sampler_when_batch_is_omitted(self) -> None:
+        """A missing batch without a sampler should fail clearly."""
+        dynamics = BaseDynamics(model=self.model, n_steps=1, device_type="cpu")
+
+        with pytest.raises(ValueError, match="no sampler configured"):
+            dynamics.run()
+
+    def test_per_system_step_limit_graduates_and_resets_replacements(self) -> None:
+        """Each replacement gets a fresh counter and a distinct exit reason."""
+        dataset = MockDataset([(2, 0)] * 4)
+        sampler = SizeAwareSampler(dataset, max_atoms=4, max_batch_size=2)
+        sink = HostMemory(capacity=4)
+        dynamics = BaseDynamics(
+            model=self.model,
+            sampler=sampler,
+            sinks=[sink],
+            refill_frequency=1,
+            n_steps=10,
+            max_steps_per_system=2,
+            convergence_hook=ConvergenceHook.from_fmax(0.0),
+            init_fn=initialize_batch_for_dynamics,
+            device_type="cpu",
+        )
+
+        assert dynamics.run() is None
+        completed = sink.read()
+        assert completed.inflight_step_count.view(-1).tolist() == [2, 2, 2, 2]
+        assert (
+            completed.inflight_termination.view(-1).tolist()
+            == [InflightTerminationReason.MAX_STEPS] * 4
+        )
+
+    @pytest.mark.parametrize(
+        ("kwargs", "message"),
+        [
+            ({"refill_frequency": 0}, "refill_frequency"),
+            ({"max_steps_per_system": 0}, "max_steps_per_system"),
+        ],
+    )
+    def test_invalid_inflight_limits_raise(
+        self, kwargs: dict[str, int], message: str
+    ) -> None:
+        """Inflight cadence and per-system limits must be positive."""
+        with pytest.raises(ValueError, match=message):
+            BaseDynamics(model=self.model, device_type="cpu", **kwargs)
 
 
 class TestRefillCheck:

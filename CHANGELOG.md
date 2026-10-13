@@ -4,6 +4,15 @@
 
 ### Added
 
+- Optional standalone inflight failure isolation and a user-structure recipe
+  composing caller-selected models, stopping rules and symmetry constraints.
+
+- Batched `FixSymmetryHook` for ASE/spglib-derived space-group constraints in
+  standalone FIRE and FIRE2 fixed- or variable-cell geometry relaxation.
+- Sampler-driven inflight execution for standalone optimizers, including
+  per-structure step limits and termination reasons. `FixSymmetryHook` now
+  binds precomputed symmetry records by stable ID when structures are replaced.
+
 - Domain decomposition for distributed inference and dynamics: a spatial halo
   strategy and a graph-parallel strategy, both driven by a declarative
   `MLIPSpec` a model wrapper publishes as `distribution_spec`. Ewald, PME,

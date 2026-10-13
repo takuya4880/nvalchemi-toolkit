@@ -720,6 +720,31 @@ class TestSkinCheck:
 
         assert torch.equal(nn_first, nn_second)
 
+    def test_same_shape_replacement_forces_rebuild(self, device: str):
+        """A new same-shape batch must not reuse the previous skin cache."""
+        hook = NeighborListHook(_cfg(), skin=1.0, stage=DynamicsStage.BEFORE_COMPUTE)
+        original = _line_batch(device, pbc=True, cell_size=20.0)
+        hook(_ctx(original), _STAGE)
+        assert not _is_neighbor(
+            original.neighbor_matrix.cpu(),
+            original.num_neighbors.cpu(),
+            0,
+            2,
+        )
+
+        # Positions and N/B are unchanged, but the smaller periodic cell makes
+        # atoms 0 and 2 neighbors through an image.  Inflight refill represents
+        # this structural event with a new Batch object.
+        replacement = _line_batch(device, pbc=True, cell_size=5.5)
+        hook(_ctx(replacement), _STAGE)
+
+        assert _is_neighbor(
+            replacement.neighbor_matrix.cpu(),
+            replacement.num_neighbors.cpu(),
+            0,
+            2,
+        )
+
     def test_rebuild_flags_true_on_first_call(self, device: str):
         """On the first call, rebuild_flags must be all-True (full rebuild)."""
         hook = NeighborListHook(_cfg(), skin=1.0, stage=DynamicsStage.BEFORE_COMPUTE)
